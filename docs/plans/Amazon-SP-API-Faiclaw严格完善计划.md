@@ -415,7 +415,7 @@ version | key_id | algorithm | nonce/iv | ciphertext | authentication_tag
 - `docker/healthcheck.mjs`
 - `docker-compose.yml`
 - 根 `package.json`
-- `docs/operations/DOCKER_DEPLOYMENT.md`
+- `docs/operations/DEPLOYMENT.md`（主部署文档；`DOCKER_DEPLOYMENT.md` 为兼容入口）
 
 **冻结的 YAML schema（不是建议项）**
 

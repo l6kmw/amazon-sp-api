@@ -7,7 +7,7 @@
 | 目录 | 内容 |
 |---|---|
 | [plans/](./plans/) | 实施计划、严格完善计划 |
-| [operations/](./operations/) | 部署、运维 runbook、日常管理 |
+| [operations/](./operations/) | **部署指南**、运维 runbook、日常管理 |
 | [connected-account/](./connected-account/) | ConnectedAccount 设计规格、验收矩阵、审核材料、Listings 集成 |
 | [acceptance/](./acceptance/) | 版本化验收证据与 canary 记录 |
 | [business/](./business/) | 欧洲站点经营体检模板与报告 |
@@ -19,7 +19,8 @@
 |---|---|
 | ConnectedAccount 严格完善计划 | [plans/Amazon-SP-API-ConnectedAccount严格完善计划.md](./plans/Amazon-SP-API-ConnectedAccount严格完善计划.md) |
 | MCP 完善实现计划 | [plans/Amazon-SP-API-MCP完善实现计划.md](./plans/Amazon-SP-API-MCP完善实现计划.md) |
-| Docker 部署 | [operations/DOCKER_DEPLOYMENT.md](./operations/DOCKER_DEPLOYMENT.md) |
+| **部署指南（主文档）** | [operations/DEPLOYMENT.md](./operations/DEPLOYMENT.md) |
+| Docker 部署入口（跳转） | [operations/DOCKER_DEPLOYMENT.md](./operations/DOCKER_DEPLOYMENT.md) |
 | 管理与上线清单 | [operations/Amazon-SP-API管理.md](./operations/Amazon-SP-API管理.md) |
 | ConnectedAccount 设计规格 | [connected-account/connected-account-account-mcp-design-spec.md](./connected-account/connected-account-account-mcp-design-spec.md) |
 | 验收矩阵 | [connected-account/connected-account-acceptance-matrix.md](./connected-account/connected-account-acceptance-matrix.md) |

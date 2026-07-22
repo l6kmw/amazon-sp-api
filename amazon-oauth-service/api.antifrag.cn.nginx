@@ -1,0 +1,80 @@
+server {
+    listen 80;
+    listen [::]:80;
+    server_name api.example.com;
+
+    root /var/www/l6kmw-hexo;
+    access_log /var/log/nginx/api-example.access.log;
+    error_log /var/log/nginx/api-example.error.log warn;
+
+    include /etc/nginx/snippets/example-cloudflare-origin.conf;
+
+    if ($example_origin_allowed = 0) {
+        return 403;
+    }
+
+    location ^~ /.well-known/acme-challenge/ {
+        default_type "text/plain";
+        try_files $uri =404;
+    }
+
+    location / {
+        return 308 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name api.example.com;
+
+    access_log /var/log/nginx/api-example.access.log;
+    error_log /var/log/nginx/api-example.error.log warn;
+
+    ssl_certificate /etc/letsencrypt/live/api.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.example.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    include /etc/nginx/snippets/example-cloudflare-origin.conf;
+
+    if ($example_origin_allowed = 0) {
+        return 403;
+    }
+
+    client_max_body_size 16k;
+
+    location = /healthz {
+        proxy_pass http://127.0.0.1:8788;
+        include /etc/nginx/proxy_params;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 15s;
+    }
+
+    location ^~ /oauth/amazon/ {
+        proxy_pass http://127.0.0.1:8788;
+        include /etc/nginx/proxy_params;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 15s;
+    }
+
+    location = /healthz/amazon-mcp {
+        proxy_pass http://127.0.0.1:8789/healthz;
+        include /etc/nginx/proxy_params;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 15s;
+    }
+
+    location = /mcp/amazon {
+        proxy_pass http://127.0.0.1:8789/mcp;
+        include /etc/nginx/proxy_params;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 300s;
+    }
+
+    location / {
+        return 404;
+    }
+}

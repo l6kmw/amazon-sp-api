@@ -1,0 +1,31 @@
+[Unit]
+Description=Amazon SP-API MCP Service
+After=network-online.target amazon-oauth-service.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=amazon-oauth
+Group=amazon-oauth
+WorkingDirectory=/opt/amazon-sp-api-mcp
+EnvironmentFile=/etc/amazon-oauth-service.env
+EnvironmentFile=/etc/amazon-sp-api-mcp.env
+EnvironmentFile=-/etc/amazon-sp-api-storage.env
+ExecStart=/usr/bin/env HOST=127.0.0.1 PORT=8789 /usr/bin/node /opt/amazon-sp-api-mcp/dist/server.js
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadOnlyPaths=/var/lib/amazon-oauth-service
+StateDirectory=amazon-sp-api-mcp
+ReadWritePaths=/var/lib/amazon-sp-api-mcp
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

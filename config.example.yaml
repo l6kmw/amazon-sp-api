@@ -1,0 +1,83 @@
+# Example configuration for Amazon OAuth + SP-API MCP container.
+# Copy to config.yaml (0600, not committed). Errors never echo secret values.
+
+server:
+  oauth:
+    host: "0.0.0.0"
+    port: 8788
+  mcp:
+    host: "0.0.0.0"
+    port: 8789
+    allowedHosts:
+      - "api.example.com"
+      - "127.0.0.1"
+      - "localhost"
+
+amazon:
+  publicOrigin: "https://api.example.com"
+  oauthRedirectUri: "https://api.example.com/oauth/amazon/callback"
+  successRedirectUri: ""
+  applicationId: "replace-with-amazon-application-id"
+  authorizationUri: "https://sellercentral-europe.amazon.com/apps/authorize/consent"
+  applicationVersion: "beta"
+  lwa:
+    clientId: "replace-with-lwa-client-id"
+    clientSecret: "replace-with-lwa-client-secret"
+  # Production keyring (preferred). currentKeyId must exist in keys.
+  # Exactly one of credentialKeys or tokenEncryptionKey may be set.
+  credentialKeys:
+    currentKeyId: "k0"
+    keys:
+      - keyId: "k0"
+        # Inline secret (private YAML only) OR secretFile: "/run/secrets/amazon-token-k0"
+        secret: "replace-with-csprng-32-byte-base64-or-64-hex"
+  # File-mode compatibility only (maps to current key k0). Not preferred for ConnectedAccount production:
+  # tokenEncryptionKey: "replace-with-32-byte-encryption-key"
+  allowedSellingPartnerIds:
+    - "A1EXAMPLESELLER"
+
+oauth:
+  internalSecret: "replace-with-csprng-at-least-32-bytes"
+  dataDirectory: "/data"
+
+mcp:
+  allowLegacyAuth: false
+  legacyAuthToken: ""
+  legacyTenantId: ""
+  enableListingsTools: false
+  identityValidationUrl: "http://host.docker.internal:8080/api/v1/admin/session"
+  # Optional; when set must pass the same local/HTTPS safety rules as identityValidationUrl.
+  # identityHealthUrl: "http://host.docker.internal:8080/healthz"
+  limits:
+    requestsPerMinute: 120
+    maxConcurrentRequests: 8
+  cache:
+    connectionTtlMs: 30000
+    regionTtlMs: 86400000
+
+# Optional external storage. Required when connected-account.enabled=true.
+# Use url or urlFile (mutually exclusive). Never put real URLs in Git.
+storage:
+  postgres:
+    # url: "postgresql://amazon:REDACTED@host.docker.internal:5432/amazon"
+    # urlFile: "/run/secrets/amazon-database-url"
+    schema: "amazon_sp_api"
+    pool:
+      min: 0
+      max: 10
+      idleTimeoutMs: 10000
+  redis:
+    # url: "redis://host.docker.internal:6379/0"
+    # urlFile: "/run/secrets/amazon-redis-url"
+    namespace: "amazon-sp-api"
+
+# ConnectedAccount Connected Account Protocol. Default false; keep false until M4 acceptance.
+connected-account:
+  enabled: false
+  # audience: "amazon-sp-api-account-service"
+  # allowedOrigins:
+  #   - "https://app.connected-account.example"
+  # jwtKeys:
+  #   - kid: "provider-v1"
+  #     issuer: "https://connected-account.example"
+  #     secretFile: "/run/secrets/connected-account-jwt-v1"

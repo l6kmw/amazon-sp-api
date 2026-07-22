@@ -1,0 +1,22 @@
+{
+  "name": "devilray-amazon-deployment",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test docker/*.test.mjs && npm --prefix amazon-oauth-service test && npm --prefix amazon-sp-api-mcp test && npm run test:verify-script",
+    "test:verify-script": "python3 -m unittest scripts/test_verify_connected-account_account_mcp.py -v",
+    "verify:connected-account-readonly": "python3 scripts/verify_connected-account_account_mcp.py",
+    "test:docker-image": "node docker/verify-runtime-image.mjs",
+    "test:docker-config": "node --test docker/*.test.mjs",
+    "ci-gate": "bash scripts/ci-gate.sh",
+    "build:mcp": "npm --prefix amazon-sp-api-mcp run build",
+    "typecheck:mcp": "npm --prefix amazon-sp-api-mcp run typecheck"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "yaml": "2.9.0"
+  }
+}

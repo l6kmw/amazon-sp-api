@@ -344,6 +344,7 @@ export class PostgresTokenStore {
          connected-account_attempt_id, status, created_at, updated_at)
       VALUES ($1, $2, $3, $4, $5, $6, 'active', $3, $3)
       ON CONFLICT (selling_partner_id) DO UPDATE SET
+        tenant_id = EXCLUDED.tenant_id,
         authorized_at = EXCLUDED.authorized_at,
         refresh_token = EXCLUDED.refresh_token,
         token_type = EXCLUDED.token_type,
@@ -352,6 +353,8 @@ export class PostgresTokenStore {
         status = 'active',
         updated_at = EXCLUDED.updated_at
       WHERE amazon_sp_api.oauth_connection.tenant_id = EXCLUDED.tenant_id
+         OR (amazon_sp_api.oauth_connection.status = 'disconnected'
+             AND amazon_sp_api.oauth_connection.refresh_token IS NULL)
       RETURNING selling_partner_id
     `, [
       sellingPartnerId,
@@ -380,6 +383,7 @@ export class PostgresTokenStore {
              connected-account_attempt_id, status, created_at, updated_at)
           VALUES ($1, $2, $3, $4, $5, $6, 'active', $3, $3)
           ON CONFLICT (selling_partner_id) DO UPDATE SET
+            tenant_id = EXCLUDED.tenant_id,
             authorized_at = EXCLUDED.authorized_at,
             refresh_token = EXCLUDED.refresh_token,
             token_type = EXCLUDED.token_type,
@@ -387,6 +391,8 @@ export class PostgresTokenStore {
             status = 'active',
             updated_at = EXCLUDED.updated_at
           WHERE amazon_sp_api.oauth_connection.tenant_id = EXCLUDED.tenant_id
+             OR (amazon_sp_api.oauth_connection.status = 'disconnected'
+                 AND amazon_sp_api.oauth_connection.refresh_token IS NULL)
           RETURNING selling_partner_id
         `, [
           sellingPartnerId,

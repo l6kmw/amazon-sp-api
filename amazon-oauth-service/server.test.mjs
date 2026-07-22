@@ -529,6 +529,20 @@ test("stores encrypted OAuth connections atomically in PostgreSQL", {
     `);
     assert.equal(disconnected.rows[0].refresh_token, null);
     assert.equal(disconnected.rows[0].status, "disconnected");
+    await secondStore.save("A1POSTGRES", "tenant-2", {
+      refresh_token: "replacement-refresh-token",
+      token_type: "bearer",
+    });
+    assert.deepEqual(await secondStore.list("tenant-1"), []);
+    assert.equal((await secondStore.list("tenant-2"))[0]?.sellingPartnerId, "A1POSTGRES");
+    const reconnected = await pool.query(`
+      SELECT refresh_token::text AS encrypted, tenant_id, status
+      FROM amazon_sp_api.oauth_connection
+      WHERE selling_partner_id = 'A1POSTGRES'
+    `);
+    assert.equal(reconnected.rows[0].tenant_id, "tenant-2");
+    assert.equal(reconnected.rows[0].status, "active");
+    assert.doesNotMatch(reconnected.rows[0].encrypted, /replacement-refresh-token/);
   } finally {
     await store.close();
     await secondStore.close();

@@ -236,11 +236,23 @@ test("serves ConnectedAccount discovery, auth check, MCP health, and enforces MC
     assert.ok((await catalogClient.listTools()).tools.some(
       (tool) => tool.name === "amazon_list_accounts",
     ));
-    await assert.rejects(
-      catalogClient.callTool({ name: "amazon_get_identity", arguments: {} }),
-      /Required scope is missing/,
-    );
     await catalogClient.close();
+    const catalogInvokeRejected = await fetch(`${origin}/mcp`, {
+      method: "POST",
+      headers: { authorization: "Bearer employee-jwt", "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 8,
+        method: "tools/call",
+        params: { name: "amazon_get_identity", arguments: {} },
+      }),
+    });
+    assert.equal(catalogInvokeRejected.status, 403);
+    assert.deepEqual(await catalogInvokeRejected.json(), {
+      jsonrpc: "2.0",
+      error: { code: -32003, message: "Required scope is missing" },
+      id: 8,
+    });
     const catalogDelete = await fetch(`${origin}/mcp`, {
       method: "DELETE",
       headers: { authorization: "Bearer employee-jwt" },

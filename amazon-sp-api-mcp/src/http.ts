@@ -66,6 +66,21 @@ function hasConnectedAccountScope(principal: AmazonPrincipal, scope: string): bo
   return principal.authType === "connected-account" && principal.scopes.has(scope);
 }
 
+const CONNECTED_ACCOUNT_CATALOG_METHODS = new Set([
+  "initialize",
+  "notifications/initialized",
+  "ping",
+  "tools/list",
+]);
+
+function hasConnectedAccountMcpAccess(principal: AmazonPrincipal, request: Request): boolean {
+  if (hasConnectedAccountScope(principal, "mcp:invoke")) return true;
+  if (!hasConnectedAccountScope(principal, "mcp:catalog")) return false;
+  if (request.method === "GET") return true;
+  if (request.method !== "POST") return false;
+  return CONNECTED_ACCOUNT_CATALOG_METHODS.has(request.body?.method);
+}
+
 function connected-accountError(response: Response, error: unknown): void {
   if (error instanceof ConnectedAccountAccountError) {
     response.status(error.status).json({ error: { code: error.code, message: error.message } });
@@ -331,7 +346,7 @@ export function createAmazonMcpHttpApp(options: {
       response.status(401).json({ error: "unauthorized" });
       return;
     }
-    if (principal.authType === "connected-account" && !hasConnectedAccountScope(principal, "mcp:invoke")) {
+    if (principal.authType === "connected-account" && !hasConnectedAccountMcpAccess(principal, request)) {
       logger.write("warn", "mcp.scope.rejected", {
         request_id: requestId,
         actor_type: actorTypeFromAuth(principal.authType),

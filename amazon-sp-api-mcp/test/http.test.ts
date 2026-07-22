@@ -157,7 +157,7 @@ test("binds a Legacy credential principal to standalone management tools", async
   }
 });
 
-test("serves ConnectedAccount discovery, auth check, MCP health, and enforces invoke scope", async () => {
+test("serves ConnectedAccount discovery, auth check, MCP health, and enforces MCP scopes", async () => {
   const principal = {
     authType: "connected-account" as const,
     tenantId: "jwt-employee:issuer:employee-1",
@@ -226,6 +226,26 @@ test("serves ConnectedAccount discovery, auth check, MCP health, and enforces in
       error: { code: -32003, message: "Required scope is missing" },
       id: 7,
     });
+
+    principal.scopes.add("mcp:catalog");
+    const catalogTransport = new StreamableHTTPClientTransport(new URL(`${origin}/mcp`), {
+      requestInit: { headers: { authorization: "Bearer employee-jwt" } },
+    });
+    const catalogClient = new Client({ name: "connected-account-catalog-test", version: "1.0.0" });
+    await catalogClient.connect(catalogTransport);
+    assert.ok((await catalogClient.listTools()).tools.some(
+      (tool) => tool.name === "amazon_list_accounts",
+    ));
+    await assert.rejects(
+      catalogClient.callTool({ name: "amazon_get_identity", arguments: {} }),
+      /Required scope is missing/,
+    );
+    await catalogClient.close();
+    const catalogDelete = await fetch(`${origin}/mcp`, {
+      method: "DELETE",
+      headers: { authorization: "Bearer employee-jwt" },
+    });
+    assert.equal(catalogDelete.status, 403);
 
     principal.scopes.add("mcp:invoke");
     const transport = new StreamableHTTPClientTransport(new URL(`${origin}/mcp`), {

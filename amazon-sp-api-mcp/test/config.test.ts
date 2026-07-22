@@ -17,6 +17,10 @@ test("builds a fail-closed runtime configuration", () => {
   assert.equal(config.host, "127.0.0.1");
   assert.equal(config.port, 8789);
   assert.deepEqual(config.allowedSellingPartnerIds, ["A1SELLER"]);
+  assert.equal(
+    config.sellerCentralManageURL,
+    "https://sellercentral-europe.amazon.com/apps/manage",
+  );
   assert.equal(config.identityValidationURL, "http://127.0.0.1:8080/api/v1/admin/session");
   assert.equal(config.identityHealthURL, "http://127.0.0.1:8080/healthz");
   assert.equal(config.oauthInternalURL, "http://127.0.0.1:8788");
@@ -36,6 +40,13 @@ test("builds a fail-closed runtime configuration", () => {
   assert.equal(
     buildRuntimeConfig({ ...validEnv, AMAZON_ENABLE_LISTINGS_TOOLS: "true" }).enableListingsTools,
     true,
+  );
+  assert.equal(
+    buildRuntimeConfig({
+      ...validEnv,
+      AMAZON_AUTHORIZATION_URI: "https://sellercentral.amazon.com/apps/authorize/consent",
+    }).sellerCentralManageURL,
+    "https://sellercentral.amazon.com/apps/manage",
   );
   assert.equal(buildRuntimeConfig({ ...validEnv, MCP_AUTH_TOKEN: undefined }).mcpAuthToken, undefined);
   assert.equal(
@@ -83,6 +94,14 @@ test("builds a fail-closed runtime configuration", () => {
   assert.throws(
     () => buildRuntimeConfig({ ...validEnv, AMAZON_ENABLE_LISTINGS_TOOLS: "yes" }),
     /AMAZON_ENABLE_LISTINGS_TOOLS/,
+  );
+  assert.throws(
+    () => buildRuntimeConfig({ ...validEnv, AMAZON_AUTHORIZATION_URI: "http://sellercentral.example.com" }),
+    /valid HTTPS URL/,
+  );
+  assert.throws(
+    () => buildRuntimeConfig({ ...validEnv, AMAZON_AUTHORIZATION_URI: "not-a-url" }),
+    /valid HTTPS URL/,
   );
   assert.throws(
     () => buildRuntimeConfig({ ...validEnv, MCP_ALLOW_LEGACY_AUTH: "true", MCP_AUTH_TOKEN: undefined }),

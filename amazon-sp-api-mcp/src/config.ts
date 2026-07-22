@@ -12,6 +12,7 @@ export interface RuntimeConfig {
   tokenEncryptionKey: string;
   tokenStoreFile: string;
   allowedSellingPartnerIds: string[];
+  sellerCentralManageURL: string;
   identityValidationURL: string;
   identityHealthURL: string;
   oauthInternalURL: string;
@@ -77,6 +78,21 @@ function origins(value: string): string[] {
     }
     return url.origin;
   });
+}
+
+function sellerCentralManageURL(env: NodeJS.ProcessEnv): string {
+  const value = env.AMAZON_AUTHORIZATION_URI?.trim() ||
+    "https://sellercentral-europe.amazon.com/apps/authorize/consent";
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new ConfigurationError("AMAZON_AUTHORIZATION_URI must be a valid HTTPS URL");
+  }
+  if (url.protocol !== "https:" || url.username || url.password) {
+    throw new ConfigurationError("AMAZON_AUTHORIZATION_URI must be a valid HTTPS URL without credentials");
+  }
+  return new URL("/apps/manage", url).toString();
 }
 
 function connected-accountJwtConfig(
@@ -176,6 +192,7 @@ export function buildRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtim
     tokenStoreFile:
       env.AMAZON_TOKEN_STORE_FILE?.trim() || "/var/lib/amazon-oauth-service/tokens.json",
     allowedSellingPartnerIds,
+    sellerCentralManageURL: sellerCentralManageURL(env),
     identityValidationURL,
     identityHealthURL:
       env.LEGACY_IDENTITY_HEALTH_URL?.trim() ||

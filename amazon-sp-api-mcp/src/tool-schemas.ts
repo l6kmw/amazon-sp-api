@@ -339,6 +339,9 @@ export const listConnectionsOutputSchema = z.object({
 export const disconnectConnectionOutputSchema = z.object({
   disconnected: z.literal(true),
   sellingPartnerId: z.string().min(1),
+  amazonAuthorizationRevoked: z.literal(false),
+  sellerCentralManageUrl: z.string().url(),
+  nextAction: z.string().min(1),
 }).strict();
 
 export const toolAnnotations = {

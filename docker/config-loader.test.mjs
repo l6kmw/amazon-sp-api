@@ -75,6 +75,10 @@ test("loads strict YAML into isolated OAuth and MCP environments", async () => {
   assert.equal(result.mcpEnv.PORT, "8789");
   assert.equal(result.mcpEnv.AMAZON_OAUTH_INTERNAL_URL, "http://127.0.0.1:8788");
   assert.equal(result.mcpEnv.AMAZON_TOKEN_STORE_FILE, "/data/tokens.json");
+  assert.equal(
+    result.mcpEnv.AMAZON_AUTHORIZATION_URI,
+    "https://sellercentral-europe.amazon.com/apps/authorize/consent",
+  );
   assert.equal(result.mcpEnv.AMAZON_ENABLE_LISTINGS_TOOLS, "true");
   assert.equal(result.mcpEnv.MCP_ALLOWED_HOSTS, "api.example.com,localhost");
   assert.equal(result.mcpEnv.MCP_ALLOW_LEGACY_AUTH, "false");

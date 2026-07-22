@@ -25,7 +25,7 @@
 | `amazon_create_authorization_url` | 创建当前 MCP 用户的一次性卖家授权地址 |
 | `amazon_create_renewal_url` | 创建当前 MCP 用户的一次性重新授权入口 |
 | `amazon_list_connections` | 列出当前 MCP 用户的卖家连接 |
-| `amazon_disconnect_connection` | 显式确认后断开当前 MCP 用户的卖家连接 |
+| `amazon_disconnect_connection` | 显式确认后断开当前 MCP 用户的本地卖家连接，并返回 Seller Central 撤销授权入口 |
 
 `amazon_business_snapshot.summary` 只根据安全聚合后的区域、站点数量、订单、库存和可选 Listing 抽样计数生成，不调用外部模型，也不会推断趋势或精确总量。`includeListings` 默认 `false`，并且只在 `AMAZON_ENABLE_LISTINGS_TOOLS=true` 时可用；开启后每个已选 Marketplace 最多抽样首批 20 个 Listing，汇总可购买样本和含问题代码的样本，并引导用户继续调用 `amazon_search_listings`。订单和库存仍分别使用 `amazon_search_orders`、`amazon_list_inventory_summaries` 查看明细。
 

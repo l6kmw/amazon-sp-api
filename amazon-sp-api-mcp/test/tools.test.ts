@@ -1061,6 +1061,7 @@ test("exposes standalone tenant-bound connection management tools", async () => 
     { async get() { return {}; } },
     {
       tenantId: "user-1",
+      sellerCentralManageURL: "https://sellercentral-europe.amazon.com/apps/manage",
       connections: {
         async createAuthorizationURL(tenantId) {
           calls.push({ action: "create", tenantId });
@@ -1127,6 +1128,15 @@ test("exposes standalone tenant-bound connection management tools", async () => 
       arguments: { sellingPartnerId: "A1EXAMPLE", confirmDisconnect: "DISCONNECT" },
     });
     assert.equal(disconnected.isError, undefined);
+    assert.match(JSON.stringify(disconnected), /"amazonAuthorizationRevoked":false/);
+    assert.match(
+      JSON.stringify(disconnected),
+      /https:\/\/sellercentral-europe\.amazon\.com\/apps\/manage/,
+    );
+    assert.match(
+      JSON.stringify(disconnected),
+      /Open https:\/\/sellercentral-europe\.amazon\.com\/apps\/manage and disable this app/,
+    );
     assert.deepEqual(calls, [
       { action: "create", tenantId: "user-1" },
       { action: "renew", tenantId: "user-1" },

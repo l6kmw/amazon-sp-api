@@ -211,6 +211,7 @@ export function createRuntime(env: NodeJS.ProcessEnv = process.env) {
       principal,
       connections,
       regionCache,
+      sellerCentralManageURL: config.sellerCentralManageURL,
       enableListingsTools: config.enableListingsTools,
       connected-accountAccounts,
       chargeSpApiCall: (tenantId) => {

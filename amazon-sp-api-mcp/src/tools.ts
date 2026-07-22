@@ -67,6 +67,7 @@ export interface AmazonMcpServerOptions {
   principal?: AmazonPrincipal;
   connections?: AmazonConnectionManager;
   regionCache?: AmazonSellerRegionCache;
+  sellerCentralManageURL?: string;
   chargeSpApiCall?: (tenantId: string) => void;
   enableListingsTools?: boolean;
   connected-accountAccounts?: {
@@ -341,6 +342,8 @@ export function createAmazonMcpServer(
   options: AmazonMcpServerOptions = {},
 ): McpServer {
   const isConnectedAccount = options.principal?.authType === "connected-account";
+  const sellerCentralManageURL = options.sellerCentralManageURL ??
+    "https://sellercentral-europe.amazon.com/apps/manage";
   const withAccount = <T extends z.ZodRawShape>(fields: T) => z.object({
     ...(isConnectedAccount
       ? { account_id: accountId }
@@ -1170,7 +1173,7 @@ export function createAmazonMcpServer(
         "amazon_disconnect_connection",
         {
           title: "Disconnect Amazon seller",
-          description: "Only delete the current user's encrypted local refresh token for one Amazon seller. Required: sellingPartnerId and confirmDisconnect=DISCONNECT. For Amazon-side revocation, the seller must disable the app in Seller Central Manage Your Apps.",
+          description: "Only delete the current user's encrypted local refresh token for one Amazon seller. Required: sellingPartnerId and confirmDisconnect=DISCONNECT. The result includes the regional Seller Central Manage Your Apps link required to finish Amazon-side revocation.",
           inputSchema: z.object({
             sellingPartnerId,
             confirmDisconnect: z.string(),
@@ -1189,6 +1192,9 @@ export function createAmazonMcpServer(
           return successResult(disconnectConnectionOutputSchema, {
             disconnected: true,
             sellingPartnerId: seller,
+            amazonAuthorizationRevoked: false,
+            sellerCentralManageUrl: sellerCentralManageURL,
+            nextAction: `Open ${sellerCentralManageURL} and disable this app in Seller Central to revoke its Amazon authorization.`,
           });
         },
       );

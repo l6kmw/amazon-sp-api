@@ -482,6 +482,7 @@ export async function loadDockerConfig(file = process.env.AMAZON_CONFIG_FILE || 
       MCP_CONNECTION_CACHE_TTL_MS: String(integer(cache.connectionTtlMs ?? 30000, "mcp.cache.connectionTtlMs", { min: 0 })),
       MCP_REGION_CACHE_TTL_MS: String(integer(cache.regionTtlMs ?? 86400000, "mcp.cache.regionTtlMs", { min: 0 })),
       AMAZON_ALLOWED_SELLING_PARTNER_IDS: sellerIds.join(","),
+      AMAZON_AUTHORIZATION_URI: httpsURL(amazon.authorizationUri, "amazon.authorizationUri"),
       AMAZON_ENABLE_LISTINGS_TOOLS: String(boolean(mcp.enableListingsTools, "mcp.enableListingsTools")),
       AMAZON_TOKEN_STORE_FILE: tokenStoreFile,
       AMAZON_OAUTH_INTERNAL_URL: `http://127.0.0.1:${oauthPort}`,

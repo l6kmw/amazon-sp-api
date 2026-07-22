@@ -238,7 +238,7 @@ export function createAmazonMcpHttpApp(options: {
         response,
         principal,
       ) => {
-        objectBody(request, []);
+        if (request.body !== undefined) objectBody(request, []);
         const attempt = await options.connected-accountAccounts!.createAuthorizationAttempt(principal);
         response.status(201).json(attempt);
       }));

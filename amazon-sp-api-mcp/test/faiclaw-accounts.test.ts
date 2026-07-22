@@ -295,9 +295,15 @@ test("serves the ConnectedAccount lifecycle and exposes only bound accounts thro
     });
     assert.equal(forbidden.status, 403);
 
-    const created = await request("/connected-account/v1/authorization-attempts", {
+    const invalidAttempt = await request("/connected-account/v1/authorization-attempts", {
       method: "POST",
-      body: "{}",
+      body: JSON.stringify({ employeeId: "employee-2" }),
+    });
+    assert.equal(invalidAttempt.status, 400);
+
+    const created = await fetch(`${origin}/connected-account/v1/authorization-attempts`, {
+      method: "POST",
+      headers: { authorization: "Bearer employee-jwt" },
     });
     assert.equal(created.status, 201);
     const attempt = await created.json();

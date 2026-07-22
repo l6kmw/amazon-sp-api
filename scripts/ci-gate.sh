@@ -30,7 +30,7 @@ npm run build:mcp
 echo "==> sensitive canary scan (source + docs)"
 # Fail if obvious secret material patterns appear outside tests/fixtures.
 if rg -n --glob '!**/node_modules/**' --glob '!**/dist/**' --glob '!**/*.test.*' \
-  --glob '!**/package-lock.json' \
+  --glob '!**/package-lock.json' --glob '!scripts/ci-gate.sh' \
   'Atza\||Atzr\||eyJhbGciOi|BEGIN (RSA |OPENSSH )?PRIVATE KEY' .; then
   echo "canary: potential secret material found" >&2
   exit 1

@@ -2,6 +2,9 @@
 
 本目录集中管理仓库内业务与工程文档（不含各子包自带的 `README.md` / `LICENSE`）。
 
+项目简介与快速部署见仓库根目录 **[README.md](../README.md)**。  
+完整部署见 **[operations/DEPLOYMENT.md](./operations/DEPLOYMENT.md)**。
+
 ## 分类
 
 | 目录 | 内容 |

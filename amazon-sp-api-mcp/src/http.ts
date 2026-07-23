@@ -212,7 +212,7 @@ export function createAmazonMcpHttpApp(options: {
       }));
 
       app.post("/connected-account/v1/accounts/refresh", manage(async (request, response, principal) => {
-        objectBody(request, []);
+        if (request.body !== undefined) objectBody(request, []);
         response.json({ items: await options.connected-accountAccounts!.refreshAccounts(principal) });
       }));
 

@@ -355,10 +355,18 @@ test("serves the ConnectedAccount lifecycle and exposes only bound accounts thro
       }),
     });
     assert.equal((await lookup.json()).items.length, 1);
-    const refreshed = await request("/connected-account/v1/accounts/refresh", {
+    for (const body of ["null", "[]", JSON.stringify("invalid"), '{"employeeId":"employee-2"}']) {
+      const invalidRefresh = await request("/connected-account/v1/accounts/refresh", {
+        method: "POST",
+        body,
+      });
+      assert.equal(invalidRefresh.status, 400);
+    }
+    const refreshed = await fetch(`${origin}/connected-account/v1/accounts/refresh`, {
       method: "POST",
-      body: "{}",
+      headers: { authorization: "Bearer employee-jwt" },
     });
+    assert.equal(refreshed.status, 200);
     assert.equal((await refreshed.json()).items.length, 0);
     context.activeConnections.set(employee.tenantId, [{
       sellingPartnerId: "A1HTTPSELLER",

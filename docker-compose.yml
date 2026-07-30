@@ -2,11 +2,15 @@
 # put URLs in private config.yaml (storage.postgres / storage.redis), never here.
 services:
   amazon-sp-api:
+    platform: ${AMAZON_PLATFORM:-linux/amd64}
     build:
       context: .
       dockerfile: docker/Dockerfile
+      args:
+        AMAZON_IMAGE_REVISION: ${AMAZON_IMAGE_REVISION:-local}
+        AMAZON_IMAGE_VERSION: ${AMAZON_IMAGE_TAG:-local}
     # Acceptance evidence must set AMAZON_IMAGE_TAG to a commit-based unique value (not latest).
-    image: amazon-sp-api:${AMAZON_IMAGE_TAG:-local}
+    image: ${AMAZON_IMAGE_REPOSITORY:-amazon-sp-api}:${AMAZON_IMAGE_TAG:-local}
     init: true
     restart: unless-stopped
     ports:

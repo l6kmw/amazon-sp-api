@@ -82,13 +82,20 @@ CI_GATE_DOCKER_IMAGE=true bun run ci-gate
 ## 5. Compose 部署
 
 ```bash
-mkdir -p data
-chmod 700 data
-export AMAZON_IMAGE_TAG="$(git rev-parse --short HEAD)"
+install -d -m 0700 data
+sudo chown 10001:10001 config.yaml data
+sudo chmod 0600 config.yaml
+export AMAZON_IMAGE_REVISION="$(git rev-parse HEAD)"
+export AMAZON_IMAGE_TAG="$(git rev-parse --short=12 HEAD)"
+export AMAZON_PLATFORM=linux/amd64
 docker compose build
 docker compose up -d
 docker compose ps
 ```
+
+镜像固定以 UID/GID `10001:10001` 运行。`config.yaml` 使用 `0600`、`data/` 使用 `0700` 时，
+两者必须归该 UID/GID 所有，否则容器无法读取配置或写入数据。部署阿里云镜像仓库版本时，
+将 `AMAZON_IMAGE_REPOSITORY` 设为完整仓库路径并使用同一个不可变提交标签；不要使用 `latest`。
 
 Compose 只绑定：
 

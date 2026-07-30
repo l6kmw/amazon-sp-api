@@ -23,6 +23,14 @@ COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production
 
 FROM node:22.18.0-bookworm-slim AS runtime
+ARG AMAZON_IMAGE_REVISION=local
+ARG AMAZON_IMAGE_SOURCE=https://github.com/l6kmw/amazon-sp-api
+ARG AMAZON_IMAGE_VERSION=local
+LABEL org.opencontainers.image.title="amazon-sp-api" \
+      org.opencontainers.image.source="${AMAZON_IMAGE_SOURCE}" \
+      org.opencontainers.image.revision="${AMAZON_IMAGE_REVISION}" \
+      org.opencontainers.image.version="${AMAZON_IMAGE_VERSION}" \
+      com.example.release="${AMAZON_IMAGE_REVISION}"
 ENV NODE_ENV=production \
     AMAZON_CONFIG_FILE=/app/config.yaml
 WORKDIR /app

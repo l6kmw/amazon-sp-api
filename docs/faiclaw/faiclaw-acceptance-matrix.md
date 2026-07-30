@@ -1,6 +1,8 @@
 # Amazon SP-API ConnectedAccount 账号型 MCP 验收矩阵
 
 > `通过` 必须有 example 自动化测试、请求/响应摘要或安全日志证据。不得记录 Token、Secret、授权码或带签名 URL。
+>
+> 本表上方是当前目标契约；下方带日期的部署记录是历史验收证据，不代表当前仍保留旧鉴权或双服务架构。
 
 | 阶段 | 类别 | 验收项 | 预期结果 | 当前证据 | 状态 |
 |---|---|---|---|---|---|
@@ -11,10 +13,11 @@
 | A | JWT | issuer/audience 错误 | 401 | `test/connected-account.test.ts`，example 通过 | 通过 |
 | A | JWT | 缺少 `jti/iat/nbf/exp` | 401 | `test/connected-account.test.ts`，example 通过 | 通过 |
 | A | JWT | 超过 5 分钟、过期、未来签发 | 401，允许偏差不超过 30 秒 | `test/connected-account.test.ts`，example 通过 | 通过 |
+| A | 双凭据 | active `oat_*` Test Agent 与 Employee JWT | 同一 `/mcp` transport 成功但解析为不同 Principal；共享 Bearer、未知/disabled/rotated/revoked Token 401；不访问外部身份服务 | `test/identity.test.ts`、`test/http.test.ts`、`test/postgres-storage.test.ts` | 通过 |
 | A | Scope | 四类 Scope | 每个端点只接受规定 Scope | auth/check 任一协议 Scope、MCP `mcp:invoke`、管理端点 `connected_accounts:manage` 均在 example 通过 | 通过 |
 | A | MCP | Streamable HTTP 与 health | 可初始化、列工具，`/mcp/healthz` 200 | example 临时实例 + 76/76；公开只读脚本 health 通过 | 通过 |
 | B | 隔离 | 两个 issuer 的相同 sub | 不同 Employee 和 workspace | `test/connected-account-accounts.test.ts` issuer 隔离，example 通过 | 通过 |
-| B | 隔离 | 同 issuer 两个 Employee | Attempt、Binding、账号不串用 | Attempt/Grant/Binding/Account 联合隔离测试，example 通过 | 通过 |
+| B | 隔离 | 同 issuer 两个 Employee | Attempt 独立；共享 Employee 仅经 active Binding 使用同一 Owner Credential | Attempt/Grant/Binding/Account/Credential 联合隔离测试；临时 PostgreSQL 16 通过 | 通过 |
 | B | 隔离 | 伪造 tenant/user/employee | 不改变服务端 principal | 管理请求未知身份字段返回 400；归属只取已验证 principal | 通过 |
 | B | Account | 一个 Employee 多账号 | API 与 MCP 列表均完整 | 两账号绑定列表与 MCP structuredContent 测试，example 通过 | 通过 |
 | B | Account | 非所属 `account_id` | 所有业务工具均拒绝 | active Binding + Grant + Account 联合归属解析；10 个业务工具逐个返回 `NOT_CONNECTED` 且 SP-API 调用数为 0；example 84/84 | 通过 |
@@ -22,16 +25,19 @@
 | B | Attempt | 重复回调/state 重放 | 只完成一次 | OAuth callback 重放返回 400；state/intent 仅存摘要 | 通过 |
 | B | Binding | 重复绑定 | 幂等或稳定冲突 | 首次 201、重复 200 且 connection 不变 | 通过 |
 | B | Binding | Unbind | 只影响当前 Employee | 重复解绑幂等；其他 Employee 不可访问 | 通过 |
-| B | Connection | Disconnect | Grant 与相关 Binding 失效，不误删凭据 | 重复断开幂等；Grant/Binding 失效，OAuth 凭据保留 | 通过 |
+| B | Connection | Disconnect | Owner Credential、Grant 与全部 Binding 精确失效，不影响同 Account 其他 Owner | 缓存先失效；重复断开幂等；共享 Employee 拒绝；临时 PostgreSQL/Redis 通过 | 通过 |
 | B | Callback | postMessage Origin | 仅允许配置 Origin | 未允许/缺失 Origin 返回 400；页面使用精确 targetOrigin | 通过 |
 | B | Callback | 浏览器安全头 | CSP、no-referrer、no-store | OAuth `server.test.mjs` 检查 nonce CSP 与三个安全头 | 通过 |
-| C | MCP | `amazon_get_identity` | 只返回安全身份摘要 | Legacy 与 ConnectedAccount structuredContent 均在 example 通过；无 tenant/issuer/Token | 通过 |
+| C | MCP | `amazon_get_identity` | 只返回 ConnectedAccount Employee 安全身份摘要 | `test/tools.test.ts`；无内部 tenant/Token | 通过 |
 | C | MCP | `amazon_list_accounts` | 只返回规范账号 ID 和安全元数据 | ConnectedAccount 仅返回当前 Employee 的 active Binding/Grant/Account；example 通过 | 通过 |
-| D | Schema | 输入 Schema | 类型、范围、枚举、未知字段、互斥关系正确 | ConnectedAccount 业务工具只暴露 `account_id`；旧实现只保留可选 `sellingPartnerId`；严格 Zod 拒绝未知字段 | 通过 |
+| D | Schema | 输入 Schema | 类型、范围、枚举、未知字段、互斥关系正确 | 业务工具只暴露 ConnectedAccount `account_id`；action 来自冻结注册表，二次 Zod 拒绝任意 path/body 字段 | 通过 |
+| D | Registry | 353 个官方 operation 覆盖 | 每项纳入或有明确排除理由，未分类使 CI 失败 | `test/sp-api-operations.test.ts`；93 纳入 / 260 排除 | 通过 |
+| D | Registry | 任意 URL/path/method 与写操作 | 在请求 Amazon 前拒绝 | 生成 action 枚举 + operation-specific 严格校验 | 通过 |
+| D | Privacy | 未知字段、PII、预签名 URL | 模型投影后再删除敏感字段 | `test/sp-api-operations.test.ts`、`test/document-reader.test.ts` | 通过 |
 | D | Schema | 成功输出 | structuredContent 通过 output Schema | M1-T1：全工具 outputSchema + 文本 JSON 与 structuredContent 同投影；列表统一 `items`；`tool-schemas.ts` 与 tests 通过 | 通过 |
 | D | Error | 参数/业务失败 | `isError=true`、文本 JSON envelope、无 structuredContent | M1-T2：`{error:{code,tool,message,http_status,request_id,next_action}}`；`test/errors.test.ts` + tools 失败断言 | 通过 |
 | D | Error | internal_error | 只返回 request ID，不泄露堆栈 | `internal_error` 无 detail；不回显异常/路径/SQL；request_id 与上下文一致 | 通过 |
-| D | Mutation | 精确确认值 | 有写操作时缺少或错误确认不得执行 | 仅 ConnectedAccount catalog 无业务写工具；设计 §6；旧实现 `amazon_disconnect_connection` 另测 | 不适用（有设计依据） |
+| D | Mutation | 业务写操作 | MCP 目录不包含 Amazon 业务写工具 | 仅允许无副作用查询和 Report/Data Kiosk 临时读取任务管理 | 通过 |
 | D | Idempotency | 相同键相同/不同请求 | 写操作复用结果或 409 | 同上，仅 ConnectedAccount catalog | 不适用（有设计依据） |
 | D | Concurrency | revision/ETag | 旧版本拒绝，重读合并后成功 | 同上，仅 ConnectedAccount catalog | 不适用（有设计依据） |
 | D | Timeout | 上游结果未知 | 写操作标记 unknown，先查询 | 同上，仅 ConnectedAccount catalog | 不适用（有设计依据） |
@@ -40,7 +46,9 @@
 | E | Token | 并发与多实例 | 单次有效刷新，无 Refresh Token 丢失 | 两 provider 共享 Redis lock，生产真实并发仅 1 次 LWA exchange | 通过 |
 | E | Token | 普通 5xx/权限错误 | 不错误触发刷新 | M2-T1：403 InvalidInput/404/429/5xx recover=0 | 通过 |
 | E | Secret | 数据库与配置 | 长期凭据加密，测试 Token 只存摘要 | PostgreSQL 保存 AES-GCM JSON envelope；迁移前后 1 条密文一致且无明文列 | 通过 |
-| E | Secret | API/MCP/前端 | 无 Token、Secret、内部 tenant | ConnectedAccount/旧实现 output Schema、HTTP 投影和生产响应扫描通过 | 通过 |
+| E | Secret | API/MCP/前端 | 无 Token、Secret、内部 tenant | ConnectedAccount output Schema、HTTP 投影与敏感信息扫描 | 通过 |
+| E | Document | Reports/Data Kiosk/Feed 分页 | 每页≤200 条且≤256 KiB；游标 15 分钟、绑定 Employee/账号/文档 | `test/document-reader.test.ts`；GZIP、轮换、篡改、跨 Employee 重放 | 通过 |
+| E | Network | 身份服务 | 启动和请求期间不访问宿主机 8080，readiness 无 identity | `src/server.ts`、`test/http.test.ts`、静态扫描 | 通过 |
 | E | Log | 成功/失败/鉴权/协议 | request ID、结果、耗时和安全摘要齐全 | M4：事件字典白名单；`mcp.*.`/`lwa.*`/`sp_api.*` | 通过 |
 | E | Log | 敏感参数 | Token、query、revision、幂等键不出现 | logger 丢弃未知字段；测试 canary | 通过 |
 | E | Network | URL（只读脚本） | 协议/userinfo/query/fragment/redirect/timeout/1MiB | `scripts/test_verify_connected-account_account_mcp.py` 覆盖 | 通过 |
@@ -54,7 +62,7 @@
 
 ## 阻断上线条件
 
-以下任一项失败时，`CONNECTED_ACCOUNT_ENABLED` 必须保持 `false`：
+以下任一项失败时，`connected-account.enabled` 必须保持 `false`：
 
 - 可通过输入 tenant、user、employee 或 account 绕过当前 Employee 范围。
 - JWT 签名、kid、issuer、audience、时间或 Scope 校验不完整。
@@ -63,6 +71,8 @@
 - Disconnect/Unbind 会误删其他有效绑定或底层凭据。
 - MCP 错误进入成功 output Schema，导致真实错误丢失。
 - 多实例 Token 刷新、Attempt 完成或回调消费没有锁与数据库唯一约束。
+- 冻结模型中存在未分类 operation，或 Restricted/Vendor/PII/写操作被误加入运行注册表。
+- 生产尚未为实际启用的 action 申请对应非受限 Seller 角色，或已有卖家未在角色变更后重新授权。
 
 ## 证据记录格式
 
@@ -95,7 +105,24 @@
 - 兼容性：旧实现同一批业务工具仍只暴露可选 `sellingPartnerId`，单连接自动选择和多连接不猜测行为保持不变。
 - 上线门槛不变：PostgreSQL/Redis、多实例锁与正式生产验收仍未完成，`CONNECTED_ACCOUNT_ENABLED` 必须保持 `false`。
 
-## 2026-07-22 M0 规格冻结记录
+## 2026-07-30 M5/M6 管理 OAuth 与隔离 staging 验收记录
+
+- 管理 OAuth 只接受 Registry 中的 `issuer + employee_id`，Admin Origin 与 ConnectedAccount Origin 分离；Attempt/完成态写入与 success audit 共事务，失败补偿删除 Redis Intent。
+- Admin 发起授权保留 `authorized_by_type=admin`，但 Credential/Grant Owner 为所选 Employee；完成时同事务建立 Owner Binding。PostgreSQL Pool `max=1` 回归证明 poll 不在已持有事务 client 内借第二连接。
+- 原生 Chrome 验证管理 OAuth POST、新窗口同源 URL、pending 轮询、completed、Refresh、Share、Unbind、Disconnect、9 个路由、320/1440、Dialog/Escape 与 Secret 不落 DOM/Storage。
+- 可复跑 real staging 使用临时 PostgreSQL 16/Redis 7/私密 Secret：显式 migration CLI 升至 Schema v3/3 条记录，启动 compiled server，完成管理员登录、Session/CSRF、一次性 `oat_*`、真实 `/mcp` initialize、64 位 Token Hash、无明文 Token 列和 success audit。
+- 同一 staging 通过自签 TLS reverse proxy + headless Chrome 验证 Secure/HttpOnly/Strict `__Host-` Cookie、浏览器 CSRF、Owner-aware OAuth Attempt 和同源 OAuth start；通过 `pg_dump → restore → Repository/keyring Refresh Token 解密` 验证回滚数据面。
+- 最新完整 CI `124 tests / 115 pass / 0 fail / 9 skipped`；显式 PostgreSQL `8/8`；真实 Redis、Docker image build/runtime admin assets、Nginx `-t` 和 real staging 通过。
+- 外部阻断缩减为 Amazon Sandbox 真实 Seller OAuth callback 与真实灰度流量稳定窗口；未满足前禁止发布。
+
+## 2026-07-30 M4 双凭据与共享账号验收记录
+
+- Discovery 在 M3/M4 全部安全门禁通过后翻转为 `sharedEmployeeBinding=true`、`independentOwnerAuthorization=true`。
+- `/mcp` 支持 Employee JWT 与独立 `oat_*` Test Agent Token；`/connected-account/v1/*` 生命周期仍仅接受 Employee JWT。
+- 统一 `AccountAccessPolicy` 在所有 LWA/SP-API 调用前解析 active Account/Grant/Binding/Credential；客户端只能传不透明 `account_id`。
+- focused 18/18、临时 PostgreSQL 16 7/7、临时 Redis 7 1/1、完整 CI `122 tests / 114 pass / 0 fail / 8 skipped`。
+
+## 2026-07-22 M0 规格冻结记录（历史）
 
 - 设计规格对齐 11 章模板；冻结 `independentOwnerAuthorization=false`（与 `oauth_connection.selling_partner_id` 全局排他及跨 tenant 冲突一致）。
 - 删除语义区分 Unbind / ConnectedAccount Disconnect / 旧实现 Disconnect / Credential Revoke / Physical Delete。

@@ -1,5 +1,3 @@
-import { loadDockerConfig } from "./config-loader.mjs";
-
 async function check(url, { expectJson = false, timeoutMs = 2_000 } = {}) {
   const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
   if (!response.ok) throw new Error(`${url} returned ${response.status}`);
@@ -15,11 +13,9 @@ async function check(url, { expectJson = false, timeoutMs = 2_000 } = {}) {
 }
 
 try {
-  const { oauthPort, mcpPort } = await loadDockerConfig();
   await Promise.all([
-    check(`http://127.0.0.1:${oauthPort}/healthz`, { expectJson: true }),
-    check(`http://127.0.0.1:${mcpPort}/healthz`, { expectJson: true }),
-    check(`http://127.0.0.1:${mcpPort}/readyz`, { expectJson: true, timeoutMs: 3_000 }),
+    check("http://127.0.0.1:8789/healthz", { expectJson: true }),
+    check("http://127.0.0.1:8789/readyz", { expectJson: true, timeoutMs: 3_000 }),
   ]);
 } catch {
   process.exitCode = 1;

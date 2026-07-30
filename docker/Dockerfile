@@ -1,29 +1,37 @@
-FROM node:22-bookworm-slim AS mcp-build
-WORKDIR /build/amazon-sp-api-mcp
-COPY amazon-sp-api-mcp/package.json amazon-sp-api-mcp/package-lock.json ./
+FROM oven/bun:1.3.6 AS bun-source
+
+FROM node:22.18.0-bookworm-slim AS web-build
+WORKDIR /web
+COPY web/admin/package.json web/admin/package-lock.json ./
 RUN npm ci
-COPY amazon-sp-api-mcp/tsconfig.json amazon-sp-api-mcp/tsconfig.build.json ./
-COPY amazon-sp-api-mcp/src ./src
-RUN npm run build && npm prune --omit=dev
+COPY web/admin ./
+RUN npm run build
 
-FROM node:22-bookworm-slim AS oauth-deps
-WORKDIR /build/amazon-oauth-service
-COPY amazon-oauth-service/package.json amazon-oauth-service/package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+FROM node:22.18.0-bookworm-slim AS build
+COPY --from=bun-source /usr/local/bin/bun /usr/local/bin/bun
+WORKDIR /build
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
+COPY tsconfig.json tsconfig.build.json ./
+COPY src ./src
+RUN ./node_modules/.bin/tsc -p tsconfig.build.json
 
-FROM node:22-bookworm-slim AS runtime
+FROM node:22.18.0-bookworm-slim AS production-dependencies
+COPY --from=bun-source /usr/local/bin/bun /usr/local/bin/bun
+WORKDIR /build
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile --production
+
+FROM node:22.18.0-bookworm-slim AS runtime
 ENV NODE_ENV=production \
     AMAZON_CONFIG_FILE=/app/config.yaml
 WORKDIR /app
 
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
-COPY amazon-oauth-service/package.json amazon-oauth-service/server.mjs amazon-oauth-service/redis-store.mjs amazon-oauth-service/token-crypto.mjs ./amazon-oauth-service/
-COPY --from=oauth-deps /build/amazon-oauth-service/node_modules ./amazon-oauth-service/node_modules
-COPY --from=mcp-build /build/amazon-sp-api-mcp/package.json ./amazon-sp-api-mcp/package.json
-COPY --from=mcp-build /build/amazon-sp-api-mcp/node_modules ./amazon-sp-api-mcp/node_modules
-COPY --from=mcp-build /build/amazon-sp-api-mcp/dist ./amazon-sp-api-mcp/dist
-COPY docker/config-loader.mjs docker/docker-entrypoint.mjs docker/healthcheck.mjs ./docker/
+COPY package.json ./
+COPY --from=production-dependencies /build/node_modules ./node_modules
+COPY --from=build /build/dist ./dist
+COPY --from=web-build /web/dist ./web/admin/dist
+COPY docker/healthcheck.mjs ./docker/healthcheck.mjs
 
 RUN groupadd --system --gid 10001 amazon \
     && useradd --system --uid 10001 --gid amazon --home-dir /app --shell /usr/sbin/nologin amazon \
@@ -31,7 +39,7 @@ RUN groupadd --system --gid 10001 amazon \
     && chown amazon:amazon /data
 
 USER amazon
-EXPOSE 8788 8789
+EXPOSE 8789
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD ["node", "/app/docker/healthcheck.mjs"]
-ENTRYPOINT ["node", "/app/docker/docker-entrypoint.mjs"]
+ENTRYPOINT ["node", "/app/dist/server.js"]

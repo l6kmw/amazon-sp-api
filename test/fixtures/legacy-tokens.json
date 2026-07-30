@@ -1,0 +1,13 @@
+{
+  "A1LEGACY": {
+    "authorizedAt": "2026-07-01T00:00:00.000Z",
+    "refreshToken": {
+      "algorithm": "aes-256-gcm",
+      "ciphertext": "hjT8o182B5f6MF76o6voQLwe6sw=",
+      "iv": "AAECAwQFBgcICQoL",
+      "tag": "7FXLY3mw5CIFHiMn5/Fc9g=="
+    },
+    "tenantId": "tenant-legacy",
+    "tokenType": "bearer"
+  }
+}

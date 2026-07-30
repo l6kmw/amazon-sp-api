@@ -1,0 +1,30 @@
+[Unit]
+Description=Amazon SP-API Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=amazon-sp-api
+Group=amazon-sp-api
+WorkingDirectory=/opt/amazon-sp-api
+Environment=NODE_ENV=production
+Environment=AMAZON_CONFIG_FILE=/etc/amazon-sp-api/config.yaml
+ExecStart=/usr/bin/node /opt/amazon-sp-api/dist/server.js
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/amazon-sp-api/config.yaml
+ReadWritePaths=/var/lib/amazon-sp-api
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

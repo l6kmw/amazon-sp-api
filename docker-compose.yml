@@ -10,8 +10,7 @@ services:
     init: true
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${AMAZON_OAUTH_PORT:-8788}:8788"
-      - "127.0.0.1:${AMAZON_MCP_PORT:-8789}:8789"
+      - "127.0.0.1:${AMAZON_PORT:-8789}:8789"
     volumes:
       - type: bind
         source: ./config.yaml
@@ -20,6 +19,8 @@ services:
       - type: bind
         source: ./data
         target: /data
+    # 仅为用户在 config.yaml 中明确配置的宿主机 PostgreSQL/Redis 保留；
+    # 应用不会自动访问宿主机 8080 或任何外部身份服务。
     extra_hosts:
       - "host.docker.internal:host-gateway"
     security_opt:

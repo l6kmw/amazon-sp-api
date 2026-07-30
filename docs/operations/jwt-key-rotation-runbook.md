@@ -6,11 +6,11 @@
 ## 固定顺序
 
 1. **Provider 双信任**  
-   在 `connected-account.jwtKeys`（或 `CONNECTED_ACCOUNT_JWT_KEYS`）同时配置旧 `kid` 与新 `kid`。  
+   在统一 `config.yaml` 的 `connected-account.jwtKeys` 中同时配置旧 `kid` 与新 `kid`。
    记录最后一次允许使用旧 key 签发 JWT 的时间：`T_old_last_issue`（UTC）。
 
 2. **ConnectedAccount 只签发新 key**  
-   确认 IdP/ConnectedAccount 配置切换为新 `kid/secret`，之后不再用旧 key 签发。
+   确认 ConnectedAccount JWT 签发配置切换为新 `kid/secret`，之后不再用旧 key 签发。
 
 3. **验证新 JWT**  
    使用新 JWT 调用 `/connected-account/v1/auth/check` 与 MCP `tools/list`，预期 200。
@@ -34,7 +34,7 @@
 
 - 双 key 同时信任：`test/connected-account.test.ts`（verifier 接受配置表中任一 kid）  
 - 未知 kid / 错误签名 → 401：同文件  
-- 配置层双 key：Docker loader `connected-account.jwtKeys[]` kid 唯一、secret ≥32 字节  
+- 配置层双 key：统一 YAML loader 要求 `connected-account.jwtKeys[]` kid 唯一、secret ≥32 字节
 
 ## 演练记录模板
 

@@ -8,4 +8,5 @@ dist/
 .env
 .api
 config.yaml
+config.local.yaml
 data/

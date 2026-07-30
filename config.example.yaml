@@ -1,83 +1,114 @@
-# Example configuration for Amazon OAuth + SP-API MCP container.
-# Copy to config.yaml (0600, not committed). Errors never echo secret values.
+# Amazon SP-API 单服务配置模板。
+#
+# 使用方法：复制为 config.yaml，替换所有 replace-with-* 占位值，然后执行 chmod 600 config.yaml。
+# 配置加载器会拒绝可被同组或其他用户读取的文件，因此权限必须为 0600 或更严格。
+# config.yaml 包含 LWA 凭证、数据库地址和加密密钥等敏感信息，禁止提交到 Git 或写入镜像层。
+# 可使用 `openssl rand -base64 32` 分别生成令牌加密密钥和 JWT 密钥；不同用途必须使用不同密钥。
+# 配置解析采用严格模式：未知字段、重复键、弱密钥或不安全 URL 会导致启动失败；报错只显示字段路径，不回显密钥值。
 
+# 单服务监听设置。OAuth、MCP、ConnectedAccount、健康检查共享同一个进程和端口。
+# 服务内部端口固定为 8789，不再接受 YAML 配置；宿主机端口仍可由 Compose 映射调整。
 server:
-  oauth:
-    host: "0.0.0.0"
-    port: 8788
-  mcp:
-    host: "0.0.0.0"
-    port: 8789
-    allowedHosts:
-      - "api.example.com"
-      - "127.0.0.1"
-      - "localhost"
+  # 容器内监听所有网卡；生产环境仍应通过宿主机回环地址和 HTTPS 反向代理访问。
+  host: "0.0.0.0"
+  # HTTP Host 头允许列表，不能为空。填写主机名或 IP，不要带 http(s):// 和路径。
+  # 必须包含实际公网域名；保留 127.0.0.1 和 localhost 以支持本机健康检查及运维访问。
+  allowedHosts:
+    - "api.example.com"
+    - "127.0.0.1"
+    - "localhost"
 
+# Amazon 应用、LWA 凭证、令牌加密和卖家访问范围。
 amazon:
+  # OAuth 服务的公网 HTTPS Origin，不含凭证，建议只填写协议和域名，例如 https://api.example.com。
+  # 该地址应与反向代理的公网入口一致，末尾斜杠会被规范化移除。
   publicOrigin: "https://api.example.com"
-  oauthRedirectUri: "https://api.example.com/oauth/amazon/callback"
+  # Amazon 回调固定由本字段推导为 https://api.example.com/oauth/amazon/callback。
+  # 推导后的完整地址必须与 Amazon Developer/Seller Central Portal 登记值完全一致。
+  # 可选的授权成功跳转地址；空字符串表示显示服务内置成功页。非空时必须为无内嵌凭证的 HTTPS URL。
   successRedirectUri: ""
+  # Amazon Portal 中的 Selling Partner API Application ID，不是 LWA Client ID。
   applicationId: "replace-with-amazon-application-id"
+  # Seller Central 授权同意页面。示例为欧洲站；使用其他区域时应填写对应区域的 HTTPS 地址。
   authorizationUri: "https://sellercentral-europe.amazon.com/apps/authorize/consent"
+  # 传给 Amazon 授权页面的应用版本；当前应用使用 beta，通常无需修改。
   applicationVersion: "beta"
+  # Login with Amazon（LWA）凭证，从 Amazon Developer Console 获取，两项均为必填。
   lwa:
+    # LWA OAuth Client ID。
     clientId: "replace-with-lwa-client-id"
+    # LWA OAuth Client Secret。属于高敏感凭证，不要复用为其他密钥。
     clientSecret: "replace-with-lwa-client-secret"
-  # Production keyring (preferred). currentKeyId must exist in keys.
-  # Exactly one of credentialKeys or tokenEncryptionKey may be set.
+  # Refresh Token 加密密钥环，所有环境均为必填，并支持无停机密钥轮换。
   credentialKeys:
+    # 当前写入新密文所用的密钥 ID，必须能在 keys 中找到，且不能使用保留值 legacy-unversioned。
+    # 最长 64 字符，只允许字母、数字、点、下划线、冒号和连字符。
     currentKeyId: "k0"
+    # 非空密钥列表；keyId 不得重复。轮换时先同时保留新旧密钥，完成迁移后再移除旧密钥。
     keys:
+      # 此项的 ID 必须与 currentKeyId 对应，或作为读取历史密文所需的旧密钥保留。
       - keyId: "k0"
-        # Inline secret (private YAML only) OR secretFile: "/run/secrets/amazon-token-k0"
+        # 每个条目必须在 secret 与 secretFile 之间二选一，不能同时设置或同时缺失。
+        # secret 只可放在私有 YAML 中；解码后必须恰好为 32 字节，即 32 字节高熵数据的 base64 或 64 位十六进制字符串。
+        # 若改用文件，删除 secret 并配置 secretFile: "/run/secrets/amazon-token-k0"；路径必须为绝对路径，文件权限为 0600 或更严格。
         secret: "replace-with-csprng-32-byte-base64-or-64-hex"
-  # File-mode compatibility only (maps to current key k0). Not preferred for ConnectedAccount production:
-  # tokenEncryptionKey: "replace-with-32-byte-encryption-key"
+  # 平台允许接入的 Amazon Selling Partner ID 硬白名单，至少填写一项，最多 100 项。
+  # 每项长度为 1～128 字符，只允许字母、数字、点、下划线、冒号和连字符；未列出的卖家会被拒绝。
   allowedSellingPartnerIds:
     - "A1EXAMPLESELLER"
 
-oauth:
-  internalSecret: "replace-with-csprng-at-least-32-bytes"
-  dataDirectory: "/data"
-
-mcp:
-  allowLegacyAuth: false
-  legacyAuthToken: ""
-  legacyTenantId: ""
-  enableListingsTools: false
-  identityValidationUrl: "http://host.docker.internal:8080/api/v1/admin/session"
-  # Optional; when set must pass the same local/HTTPS safety rules as identityValidationUrl.
-  # identityHealthUrl: "http://host.docker.internal:8080/healthz"
-  limits:
-    requestsPerMinute: 120
-    maxConcurrentRequests: 8
-  cache:
-    connectionTtlMs: 30000
-    regionTtlMs: 86400000
-
-# Optional external storage. Required when connected-account.enabled=true.
-# Use url or urlFile (mutually exclusive). Never put real URLs in Git.
+# 文件持久化目录以及可选的外部存储。启用 connected-account.enabled 时 PostgreSQL 和 Redis 均为必填。
+# 如果保留 postgres/redis 子段，每个子段都必须启用 url 或 urlFile 之一；不要把含密码的真实连接 URL 提交到 Git。
 storage:
-  postgres:
+  # 必填的绝对路径；文件模式使用 tokens.json、states.json、intents.json，并保留历史 connected-account.sqlite。
+  # 容器部署通常使用 /data；本地直接运行时请改成当前用户可写的绝对路径。
+  dataDirectory: "/data"
+  # PostgreSQL 用于持久化 OAuth 连接、加密 Refresh Token 及 ConnectedAccount 账户状态。
+#   postgres:
+    # 与 urlFile 二选一。支持 postgres:// 或 postgresql://；生产连接应按数据库要求启用 TLS。
     # url: "postgresql://amazon:REDACTED@host.docker.internal:5432/amazon"
+    # 与 url 二选一。必须是容器内可读的绝对路径，且目标为权限 0600 或更严格的普通文件。
     # urlFile: "/run/secrets/amazon-database-url"
-    schema: "amazon_sp_api"
-    pool:
-      min: 0
-      max: 10
-      idleTimeoutMs: 10000
-  redis:
+    # Schema 固定为 amazon_sp_api，不接受自定义配置。
+    # PostgreSQL 连接池参数。
+#     pool:
+      # 最小连接数，取值 0～50，默认 0，并且不能大于 max。
+#       min: 0
+      # 最大连接数，取值 1～100，默认 10。
+#       max: 10
+      # 空闲连接回收时间，单位毫秒；取值 1000～600000，默认 10000（10 秒）。
+#       idleTimeoutMs: 10000
+  # Redis 用于 OAuth 临时状态、访问令牌协调及多实例间的一致性控制。
+#   redis:
+    # 与 urlFile 二选一。支持 redis:// 或启用 TLS 的 rediss://。
     # url: "redis://host.docker.internal:6379/0"
+    # 与 url 二选一。必须是容器内可读的绝对路径，且目标为权限 0600 或更严格的普通文件。
     # urlFile: "/run/secrets/amazon-redis-url"
-    namespace: "amazon-sp-api"
+    # Redis Key 命名空间，默认 amazon-sp-api，最长 64 字符，不能包含空白或控制字符。
+    # 多套环境共用 Redis 时应使用不同命名空间，避免测试与生产数据冲突。
+#     namespace: "amazon-sp-api"
 
-# ConnectedAccount Connected Account Protocol. Default false; keep false until M4 acceptance.
+# ConnectedAccount Connected Account Protocol 与 Employee JWT 配置；安全管理控制面启用时，MCP 还接受数据库中 active Test Agent 的独立 oat_* Token。
+# 已删除整个 mcp 配置分区：Listings 固定开启，限流固定为每租户 120 次/分钟和 8 并发，
+# 连接/区域缓存固定为 30 秒/24 小时，不再访问 host.docker.internal:8080 或其他身份校验服务。
+# 默认关闭；关闭时 OAuth、healthz 和 readyz 仍可用，Employee JWT 失败关闭；若 PostgreSQL 与私密 admin.sessionSecretFile 均配置，active oat_* Test Agent 仍可使用 /mcp。
+# 启用后必须同时配置 storage.postgres、storage.redis、amazon.credentialKeys 以及下方 audience、allowedOrigins、jwtKeys。
 connected-account:
+  # 功能总开关。改为 true 会启用 ConnectedAccount JWT 鉴权、MCP、发现接口和 Connected Account 流程。
   enabled: false
+  # 启用时必填，表示服务接受的 JWT aud；长度为 3～256 字符，必须与令牌签发方配置完全一致。
   # audience: "amazon-sp-api-account-service"
+  # 启用时必填，最多 20 项。每项必须是精确 HTTPS Origin，只包含协议、主机和可选端口。
+  # 禁止通配符、路径、查询参数、片段以及内嵌凭证；填写实际允许发起连接流程的 ConnectedAccount 前端来源。
   # allowedOrigins:
   #   - "https://app.connected-account.example"
+  # 启用时必填且不能为空。MCP 直接使用本密钥环在进程内验证签名、issuer、audience、kid、Scope 和时间声明，不会发起身份校验 HTTP 请求。
+  # 可在轮换期同时保留多个 JWT 验签密钥，但 kid 必须唯一。
   # jwtKeys:
+  #   # kid 长度为 1～128 字符，只允许字母、数字、点、下划线和连字符。
   #   - kid: "provider-v1"
+  #     # 预期的 JWT iss，最长 512 字符，必须与签发方令牌中的值完全一致。
   #     issuer: "https://connected-account.example"
+  #     # 每项必须在 secret 与 secretFile 之间二选一；示例使用更安全的只读 Secret 文件。
+  #     # 文件路径必须为绝对路径、权限为 0600 或更严格；密钥内容需为至少 32 字节的高熵 base64 或 64 位十六进制字符串。
   #     secretFile: "/run/secrets/connected-account-jwt-v1"

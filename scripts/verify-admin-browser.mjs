@@ -63,7 +63,7 @@ const server = createServer(async (request, response) => {
   if (url.pathname === "/api/v1/admin/dashboard") {
     json(response, {
       total_accounts: 0, active_accounts: 0, active_bindings: 0, active_test_agents: 1,
-      credential_status_counts: {}, recent_errors_count: 0,
+      credential_status_counts: {}, recent_errors_count: 2,
     });
     return;
   }
@@ -177,7 +177,23 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (url.pathname === "/api/v1/admin/audit-logs") {
-    json(response, { items: [], next_cursor: null });
+    json(response, {
+      items: [{
+        id: "128",
+        tenant_id: "tenant-1",
+        actor_type: "employee_jwt",
+        actor_id: "actor-hash",
+        agent_record_id: null,
+        action: "mcp.tool.failed",
+        resource_type: "mcp_tool",
+        resource_id: "amazon_search_orders",
+        result: "failed",
+        error_code: "invalid_tool_arguments",
+        request_id: "req_browser_audit",
+        created_at: "2026-07-30T00:00:00.000Z",
+      }],
+      next_cursor: null,
+    });
     return;
   }
   if (url.pathname === "/api/v1/admin/connections/con_browser" && request.method === "DELETE") {
@@ -322,6 +338,15 @@ try {
     set('#admin-username','admin'); set('#admin-password','browser-password'); document.querySelector('form').requestSubmit();
   })()`);
   await waitFor("document.body.innerText.includes('Seller 账号')", "authenticated shell");
+  await waitFor("document.body.innerText.includes('过去 24 小时有 2 项告警')", "dashboard alert status");
+  assert.equal(
+    await evaluate("document.body.innerText.includes('过去 24 小时存在 2 次 MCP 工具或凭据异常')"),
+    true,
+  );
+  assert.equal(
+    await evaluate("document.querySelector('a[href=\"#/audit-logs\"]')?.textContent.trim()"),
+    "查看审计日志",
+  );
   const routes = [
     ["#/", "Seller 账号总数"],
     ["#/accounts", "Amazon Seller 账号"],
@@ -336,6 +361,11 @@ try {
   for (const [hash, label] of routes) {
     await evaluate(`window.location.hash=${JSON.stringify(hash)}`);
     await waitFor(`document.body.innerText.includes(${JSON.stringify(label)})`, hash);
+    if (hash === "#/audit-logs") {
+      assert.equal(await evaluate("document.body.innerText.includes('2026/07/30 08:00:00')"), true);
+      assert.equal(await evaluate("document.body.innerText.includes('2026-07-30T00:00:00.000Z')"), false);
+      assert.equal(await evaluate("document.body.innerText.includes('时间戳（北京时间）')"), true);
+    }
     if (hash === "#/mcp-config") {
       assert.equal(await evaluate("document.body.innerText.includes(window.location.origin + '/mcp/amazon')"), true);
       assert.equal(await evaluate("document.body.innerText.includes(window.location.origin + 'http')"), false);
@@ -418,11 +448,13 @@ try {
     issuer: "connected-account-browser",
     connection_id: "con_browser",
   });
-  await waitFor(
-    "Array.from(document.querySelectorAll('button')).some((item)=>item.textContent.trim()==='Disconnect Grant')",
-    "disconnect button",
-  );
-  await evaluate(`Array.from(document.querySelectorAll('button')).find((item)=>item.textContent.trim()==='Disconnect Grant').click()`);
+  await waitFor(`(() => {
+    const item = Array.from(document.querySelectorAll('button'))
+      .find((button) => button.textContent.trim() === 'Disconnect Grant');
+    if (!item || item.disabled) return false;
+    item.click();
+    return true;
+  })()`, "disconnect button");
   await waitFor("document.querySelector('dialog')?.open === true", "disconnect confirmation dialog");
   await evaluate(`(() => { const input=document.querySelector('dialog input'); const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set; setter.call(input,'acct_browser'); input.dispatchEvent(new Event('input',{bubbles:true})); })()`);
   await waitFor(

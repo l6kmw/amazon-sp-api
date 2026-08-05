@@ -262,7 +262,6 @@ test("shares ConnectedAccount ownership and encrypted tokens through PostgreSQL"
     const tokens = new PostgresRefreshTokenStore({
       databaseUrl,
       encryptionKey: encryptionKey.toString("base64"),
-      allowedSellingPartnerIds: ["A1POSTGRES"],
     });
     try {
       await tokens.initialize();
@@ -463,7 +462,6 @@ test("reuses one issuer-scoped account while isolating owner credentials", {
   const tokens = new PostgresRefreshTokenStore({
     databaseUrl,
     encryptionKey: encryptionKey.toString("base64"),
-    allowedSellingPartnerIds: ["A1INDEPENDENT"],
   });
   try {
     await admin.query("DROP SCHEMA IF EXISTS amazon_sp_api CASCADE");

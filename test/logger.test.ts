@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { runWithToolRequestContext } from "../src/errors.js";
 import { createStructuredLogger } from "../src/logger.js";
 
 test("writes allowlisted structured logs without raw identifiers", () => {
@@ -71,4 +72,39 @@ test("drops unknown events and invalid field types", () => {
   assert.equal(record.request_id, undefined);
   assert.equal(record.duration_ms, undefined);
   assert.equal(record.status, "ok");
+});
+
+test("inherits the tool request ID and isolates concurrent log contexts", async () => {
+  const lines: string[] = [];
+  const logger = createStructuredLogger({
+    hashKey: "request-context-test",
+    write(line) { lines.push(line); },
+  });
+
+  await Promise.all([
+    runWithToolRequestContext({ requestId: "req_context_a" }, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      logger.write("warn", "sp_api.request.failed", {
+        operation: "search_orders",
+        error_code: "upstream_error",
+        result: "error",
+        attempt: 1,
+      });
+    }),
+    runWithToolRequestContext({ requestId: "req_context_b" }, async () => {
+      logger.write("error", "lwa.refresh.failed", {
+        request_id: "req_wrong_id",
+        error_code: "lwa_failed",
+        result: "error",
+        attempt: 1,
+      });
+    }),
+  ]);
+
+  const records = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+  const spApi = records.find((record) => record.event === "sp_api.request.failed");
+  const lwa = records.find((record) => record.event === "lwa.refresh.failed");
+  assert.equal(spApi?.request_id, "req_context_a");
+  assert.equal(lwa?.request_id, "req_context_b");
+  assert.doesNotMatch(lines.join("\n"), /req_wrong_id/);
 });

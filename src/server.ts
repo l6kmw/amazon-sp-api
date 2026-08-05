@@ -126,7 +126,6 @@ export async function createRuntime(configFile?: string) {
       pool,
       encryptionKey: currentEncryptionKey,
       keyring,
-      allowedSellingPartnerIds: config.allowedSellingPartnerIds,
     })
     : new EncryptedFileTokenStore({
       file: config.tokenStoreFile,
@@ -257,7 +256,7 @@ export async function createRuntime(configFile?: string) {
   const adminSessions = adminControlEnabled
     ? new AdminSessionManager({ pool, secret: config.adminSessionSecret! })
     : undefined;
-  const adminAudits = adminControlEnabled ? new AdminAuditService(pool) : undefined;
+  const adminAudits = pool ? new AdminAuditService(pool) : undefined;
   const adminBindingAccounts = adminControlEnabled
     ? connected-accountAccounts instanceof PostgresConnectedAccountAccountStore
       ? connected-accountAccounts

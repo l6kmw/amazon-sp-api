@@ -19,7 +19,11 @@ import {
   type ConnectedAccountAccountService,
   type ConnectedAccountPrincipal,
 } from "./connected-account-accounts.js";
-import { normalizeRequestId, runWithToolRequestContext } from "./errors.js";
+import {
+  normalizeRequestId,
+  runWithToolRequestContext,
+  type ToolRequestContext,
+} from "./errors.js";
 import { CONNECTED_ACCOUNT_DISCOVERY_MANIFEST, CONNECTED_ACCOUNT_PROTOCOL_SCOPES } from "./connected-account.js";
 import { actorTypeFromAuth } from "./logger.js";
 import { isLoopbackAddress, mcpMetrics } from "./metrics.js";
@@ -512,11 +516,12 @@ export function createAmazonMcpHttpApp(options: {
       principal.authType === "connected-account" ? principal.employeeId : principal.agentId,
     );
     const methodLabel = METHODS_FOR_LOG.has(method) ? method : "unknown";
+    const toolContext: ToolRequestContext = {
+      requestId,
+      ...(tool ? { tool } : {}),
+    };
     try {
-      await runWithToolRequestContext({
-        requestId,
-        ...(tool ? { tool } : {}),
-      }, async () => {
+      await runWithToolRequestContext(toolContext, async () => {
         await server.connect(transport);
         await transport.handleRequest(request, response, request.body);
       });
@@ -545,7 +550,7 @@ export function createAmazonMcpHttpApp(options: {
       await transport.close().catch(() => undefined);
       await server.close().catch(() => undefined);
       const durationMs = Math.round((performance.now() - startedAt) * 10) / 10;
-      const result = response.statusCode >= 400 ? "error" : "success";
+      const result = toolContext.failureCode || response.statusCode >= 400 ? "error" : "success";
       logger.write("info", "mcp.request.completed", {
         request_id: requestId,
         method: methodLabel,
@@ -553,17 +558,23 @@ export function createAmazonMcpHttpApp(options: {
         actor_type: actorType,
         actor_id_hash: actorIdHash,
         result,
+        ...(toolContext.failureCode ? { error_code: toolContext.failureCode } : {}),
         duration_ms: durationMs,
       });
       if (method === "tools/call" && tool) {
-        logger.write(result === "success" ? "info" : "warn", "mcp.tool.completed", {
-          request_id: requestId,
-          tool,
-          actor_type: actorType,
-          actor_id_hash: actorIdHash,
-          result,
-          duration_ms: durationMs,
-        });
+        logger.write(
+          result === "success" ? "info" : "warn",
+          result === "success" ? "mcp.tool.completed" : "mcp.tool.failed",
+          {
+            request_id: requestId,
+            tool,
+            actor_type: actorType,
+            actor_id_hash: actorIdHash,
+            result,
+            ...(toolContext.failureCode ? { error_code: toolContext.failureCode } : {}),
+            duration_ms: durationMs,
+          },
+        );
         mcpMetrics.inc("mcp_tool_results_total", "MCP tool call results", {
           tool,
           result,
@@ -574,6 +585,30 @@ export function createAmazonMcpHttpApp(options: {
           result,
           actor_type: actorType,
         });
+        if (toolContext.failureCode && options.adminAudits) {
+          try {
+            await options.adminAudits.record({
+              actorType: principal.authType === "connected-account" ? "employee_jwt" : "agent_token",
+              actorId: actorIdHash ?? "unknown",
+              agentRecordId: principal.authType === "test_agent"
+                ? principal.agentRecordId
+                : undefined,
+              action: "mcp.tool.failed",
+              resourceType: "mcp_tool",
+              resourceId: tool,
+              requestId,
+            }, "failed", toolContext.failureCode);
+          } catch {
+            logger.write("error", "mcp.alert.persist_failed", {
+              request_id: requestId,
+              tool,
+              actor_type: actorType,
+              actor_id_hash: actorIdHash,
+              result: "error",
+              error_code: "internal_error",
+            });
+          }
+        }
       }
     }
   });

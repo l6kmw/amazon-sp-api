@@ -87,6 +87,12 @@ test("tools/list exposes only ConnectedAccount account lifecycle and frozen read
       };
       assert.ok((schema.properties?.action?.enum?.length ?? 0) > 0, domain);
     }
+    const identitySchema = tools.find((tool) => tool.name === "amazon_get_identity")?.inputSchema as {
+      properties?: Record<string, unknown>;
+      required?: string[];
+    };
+    assert.ok(identitySchema.properties?.account_id);
+    assert.ok(!identitySchema.required?.includes("account_id"));
     for (const tool of tools) {
       assert.ok(tool.outputSchema, tool.name);
       assert.equal(typeof tool.annotations?.readOnlyHint, "boolean", tool.name);

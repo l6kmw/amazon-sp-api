@@ -5,8 +5,10 @@ import { test } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
+import type { AdminAuditService } from "../src/admin-audit.js";
 import { CONNECTED_ACCOUNT_DISCOVERY_MANIFEST } from "../src/connected-account.js";
 import { createAmazonMcpHttpApp } from "../src/http.js";
+import { createStructuredLogger } from "../src/logger.js";
 import { createRuntimeReadinessCheck } from "../src/server.js";
 import { createAmazonMcpServer } from "../src/tools.js";
 
@@ -125,7 +127,10 @@ test("MCP accepts independent Test Agent and Employee credentials", async () => 
     const client = new Client({ name: "connected-account-only-http", version: "1.0.0" });
     await client.connect(transport);
     assert.equal((await client.listTools()).tools.length, 30);
-    assert.deepEqual((await client.callTool({ name: "amazon_get_identity", arguments: {} })).structuredContent, {
+    assert.deepEqual((await client.callTool({
+      name: "amazon_get_identity",
+      arguments: { account_id: "acct_0123456789abcdef" },
+    })).structuredContent, {
       identity_type: "employee_jwt",
       identity_id: "employee-1",
       role: "employee",
@@ -162,6 +167,84 @@ test("MCP accepts independent Test Agent and Employee credentials", async () => 
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 });
+
+test("records MCP isError responses as tool failures even when HTTP stays 200", async () => {
+  const lines: string[] = [];
+  const alerts: Array<{
+    event: Record<string, unknown>;
+    result: string;
+    errorCode: string | null;
+  }> = [];
+  const logger = createStructuredLogger({
+    hashKey: "http-tool-failure-test",
+    write(line) { lines.push(line); },
+  });
+  const app = createAmazonMcpHttpApp({
+    host: "127.0.0.1",
+    allowedHosts: ["127.0.0.1", "localhost"],
+    version: "0.1.0",
+    toolCount: 30,
+    logger,
+    adminAudits: {
+      async record(event, result, errorCode) {
+        alerts.push({
+          event: event as unknown as Record<string, unknown>,
+          result,
+          errorCode: errorCode ?? null,
+        });
+      },
+    } as AdminAuditService,
+    authenticate: async (token) => token === "employee-jwt" ? principal : null,
+    createServer: (authenticated) => createAmazonMcpServer(
+      { async get() { return {}; } },
+      { principal: authenticated },
+    ),
+  });
+  const { server, origin } = await listen(app);
+  try {
+    const transport = new StreamableHTTPClientTransport(new URL(`${origin}/mcp`), {
+      requestInit: { headers: { authorization: "Bearer employee-jwt" } },
+    });
+    const client = new Client({ name: "tool-failure-logging", version: "1.0.0" });
+    await client.connect(transport);
+    const result = await client.callTool({
+      name: "amazon_get_identity",
+      arguments: { unexpected: true },
+    });
+    assert.equal(result.isError, true);
+    await client.close();
+
+    const records = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+    const toolRecord = records.find((record) =>
+      record.event === "mcp.tool.failed" && record.tool === "amazon_get_identity"
+    );
+    assert.equal(toolRecord?.result, "error");
+    assert.equal(toolRecord?.error_code, "invalid_tool_arguments");
+    assert.equal(typeof toolRecord?.request_id, "string");
+    const requestRecord = records.find((record) =>
+      record.event === "mcp.request.completed"
+      && record.request_id === toolRecord?.request_id
+    );
+    assert.equal(requestRecord?.result, "error");
+    assert.equal(requestRecord?.error_code, "invalid_tool_arguments");
+    assert.deepEqual(alerts, [{
+      event: {
+        actorType: "employee_jwt",
+        actorId: toolRecord?.actor_id_hash,
+        agentRecordId: undefined,
+        action: "mcp.tool.failed",
+        resourceType: "mcp_tool",
+        resourceId: "amazon_get_identity",
+        requestId: toolRecord?.request_id,
+      },
+      result: "failed",
+      errorCode: "invalid_tool_arguments",
+    }]);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
 test("connected-account.enabled=false behavior closes only MCP authentication", async () => {
   const app = createAmazonMcpHttpApp({
     host: "127.0.0.1",

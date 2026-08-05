@@ -406,7 +406,7 @@ export function createAmazonMcpServer(
     {
       title: "Get Amazon MCP identity",
       description: "Return a safe summary of the authenticated MCP identity. No tenant, workspace, JWT claims, token, or credential metadata is returned.",
-      inputSchema: z.object({}).strict(),
+      inputSchema: z.object({ account_id: accountId.optional() }).strict(),
       outputSchema: identityOutputSchema,
       annotations: toolAnnotations.localRead,
     },

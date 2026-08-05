@@ -40,4 +40,5 @@ test("Docker packaging excludes local secrets and produces traceable amd64 image
   ]) assert.ok(dockerfile.includes(label), label);
   assert.match(compose, /platform: \$\{AMAZON_PLATFORM:-linux\/amd64\}/u);
   assert.match(compose, /image: \$\{AMAZON_IMAGE_REPOSITORY:-amazon-sp-api\}:\$\{AMAZON_IMAGE_TAG:-local\}/u);
+  assert.match(compose, /logging:\s+driver: json-file\s+options:\s+max-size: "10m"\s+max-file: "5"/u);
 });

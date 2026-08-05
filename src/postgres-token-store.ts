@@ -27,13 +27,11 @@ export class PostgresRefreshTokenStore implements ConnectionStore {
   readonly #pool: Pool;
   readonly #ownsPool: boolean;
   readonly #keyring: TokenKeyring;
-  readonly #allowedSellingPartnerIds: ReadonlySet<string>;
 
   constructor(options: {
     databaseUrl?: string;
     pool?: Pool;
     encryptionKey: string;
-    allowedSellingPartnerIds: Iterable<string>;
     keyring?: TokenKeyring;
   }) {
     if (!options.pool && !options.databaseUrl) {
@@ -47,10 +45,6 @@ export class PostgresRefreshTokenStore implements ConnectionStore {
     this.#keyring = options.keyring ?? createTokenKeyringFromConfig({
       encryptionKey: options.encryptionKey,
     });
-    this.#allowedSellingPartnerIds = new Set(options.allowedSellingPartnerIds);
-    if (this.#allowedSellingPartnerIds.size === 0) {
-      throw new Error("at least one selling partner must be allowed");
-    }
   }
 
   async initialize(): Promise<void> {
@@ -237,9 +231,6 @@ export class PostgresRefreshTokenStore implements ConnectionStore {
   ): Promise<RefreshTokenCredential> {
     if (!tenantId) {
       throw new AmazonMcpError("TENANT_REQUIRED", "tenant identity is required");
-    }
-    if (!this.#allowedSellingPartnerIds.has(sellingPartnerId)) {
-      throw new AmazonMcpError("SELLER_NOT_ALLOWED", "selling partner is not allowed");
     }
     const result = await this.#pool.query<TokenRow>(`
       WITH accessible AS (

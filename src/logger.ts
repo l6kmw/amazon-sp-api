@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import { getToolRequestContext } from "./errors.js";
 import { SP_API_OPERATIONS } from "./generated/sp-api-registry.js";
 
 export type LogLevel = "info" | "warn" | "error";
@@ -49,6 +50,8 @@ export const EVENT_FIELD_ALLOWLIST: Readonly<Record<string, readonly string[]>> 
   "mcp.request.completed": ["method", "tool", "actor_type", "actor_id_hash"],
   "mcp.request.failed": ["method", "tool", "actor_type", "actor_id_hash"],
   "mcp.tool.completed": ["tool", "actor_type", "actor_id_hash", "issuer_alias"],
+  "mcp.tool.failed": ["tool", "actor_type", "actor_id_hash", "issuer_alias"],
+  "mcp.alert.persist_failed": ["tool", "actor_type", "actor_id_hash"],
   "lwa.refresh.completed": ["result", "attempt"],
   "lwa.refresh.failed": ["error_code", "attempt"],
   "lwa.refresh.rotation_skipped": ["reason_code"],
@@ -218,7 +221,11 @@ export function createStructuredLogger(options: {
         }
         const allowed = new Set<string>([...COMMON_FIELDS, ...allowedExtras]);
         const safe: Record<string, LogValue> = { service };
-        for (const [key, value] of Object.entries(fields)) {
+        const context = getToolRequestContext();
+        const contextualFields = context
+          ? { ...fields, request_id: context.requestId }
+          : fields;
+        for (const [key, value] of Object.entries(contextualFields)) {
           if (!allowed.has(key)) {
             dropped += 1;
             continue;

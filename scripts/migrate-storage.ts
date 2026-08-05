@@ -22,7 +22,6 @@ const store = new PostgresRefreshTokenStore({
   pool,
   encryptionKey: currentEncryptionKey,
   keyring: createTokenKeyringFromConfig(config.credentialKeyring),
-  allowedSellingPartnerIds: config.allowedSellingPartnerIds,
 });
 
 try {

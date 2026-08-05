@@ -136,6 +136,15 @@ export function DashboardPage() {
     configStatus?.postgres_status === 'ok' &&
     configStatus?.redis_status === 'ok'
 
+  const recentErrorsCount = stats?.recent_errors_count ?? 0
+  const serviceStatus = error
+    ? { tone: 'danger' as Tone, label: '系统数据未同步' }
+    : loading
+      ? { tone: 'warning' as Tone, label: '服务状态检查中' }
+      : recentErrorsCount > 0
+        ? { tone: 'danger' as Tone, label: `过去 24 小时有 ${recentErrorsCount} 项告警` }
+        : { tone: 'success' as Tone, label: 'Amazon MCP 服务正常运行' }
+
   return (
     <Page>
       <WelcomeStrip>
@@ -143,8 +152,8 @@ export function DashboardPage() {
           <Greeting>{greeting}</Greeting>
           <DateText>{today}</DateText>
         </WelcomeLeft>
-        <StatusBadge tone={error ? 'danger' : 'success'}>
-          {error ? '系统数据未同步' : 'Amazon MCP 服务正常运行'}
+        <StatusBadge tone={serviceStatus.tone}>
+          {serviceStatus.label}
         </StatusBadge>
       </WelcomeStrip>
 
@@ -227,8 +236,8 @@ export function DashboardPage() {
         <Panel>
           <PanelHeader>
             <PanelTitle>系统运行摘要</PanelTitle>
-            <StatusBadge tone={stats?.recent_errors_count ? 'danger' : 'muted'}>
-              {stats?.recent_errors_count ? `${stats.recent_errors_count} 项报错` : '运行平稳'}
+            <StatusBadge tone={recentErrorsCount > 0 ? 'danger' : 'muted'}>
+              {recentErrorsCount > 0 ? `${recentErrorsCount} 项告警` : '运行平稳'}
             </StatusBadge>
           </PanelHeader>
 
@@ -243,7 +252,12 @@ export function DashboardPage() {
             </SummaryItem>
             <SummaryItem>
               <SummaryLabel>最近错误 / 告警</SummaryLabel>
-              <SummaryValue>{stats?.recent_errors_count ? `过去 24 小时存在 ${stats.recent_errors_count} 次凭据刷库异常` : '暂无高优先级告警'}</SummaryValue>
+              <SummaryValue>
+                {recentErrorsCount > 0
+                  ? `过去 24 小时存在 ${recentErrorsCount} 次 MCP 工具或凭据异常`
+                  : '暂无高优先级告警'}
+              </SummaryValue>
+              {recentErrorsCount > 0 ? <AuditLink href="#/audit-logs">查看审计日志</AuditLink> : null}
             </SummaryItem>
           </SummaryBox>
         </Panel>
@@ -431,4 +445,15 @@ const SummaryValue = styled.span`
   font-size: ${({ theme }) => theme.typeScale.small};
   font-family: ${({ theme }) => theme.fonts.numeric};
   word-break: break-all;
+`
+
+const AuditLink = styled.a`
+  width: fit-content;
+  color: ${({ theme }) => theme.colors.primary};
+  font-size: ${({ theme }) => theme.typeScale.small};
+  font-weight: 650;
+
+  &:hover {
+    color: ${({ theme }) => theme.colors.primaryStrong};
+  }
 `

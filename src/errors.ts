@@ -68,6 +68,7 @@ export interface ConnectedAccountPublicErrorEnvelope {
 export interface ToolRequestContext {
   requestId: string;
   tool?: string;
+  failureCode?: ConnectedAccountPublicErrorCode;
 }
 
 const toolRequestContext = new AsyncLocalStorage<ToolRequestContext>();
@@ -239,6 +240,12 @@ function buildPublicEnvelope(options: {
   return { error: body };
 }
 
+function serializePublicEnvelope(envelope: ConnectedAccountPublicErrorEnvelope): string {
+  const context = toolRequestContext.getStore();
+  if (context) context.failureCode = envelope.error.code;
+  return JSON.stringify(envelope);
+}
+
 export function formatConnectedAccountToolError(options: {
   code: ConnectedAccountPublicErrorCode;
   tool?: string;
@@ -248,7 +255,7 @@ export function formatConnectedAccountToolError(options: {
   issues?: ConnectedAccountToolErrorIssue[];
   retryAfterSeconds?: number;
 }): string {
-  return JSON.stringify(buildPublicEnvelope({
+  return serializePublicEnvelope(buildPublicEnvelope({
     ...options,
     tool: options.tool ?? extractToolName("", options.tool),
   }));
@@ -298,7 +305,7 @@ export function normalizeToolErrorMessage(errorMessage: string): string {
               ? parsed.message
               : undefined,
           );
-      return JSON.stringify(buildPublicEnvelope({
+      return serializePublicEnvelope(buildPublicEnvelope({
         code: publicCode,
         tool: extractToolName(errorMessage),
         message: PUBLIC_CODE_MESSAGES[publicCode],
@@ -312,7 +319,7 @@ export function normalizeToolErrorMessage(errorMessage: string): string {
     if (isRecord(parsed) && isRecord(parsed.error)) {
       const code = parsed.error.code;
       if (typeof code === "string" && code in PUBLIC_CODE_MESSAGES) {
-        return JSON.stringify(buildPublicEnvelope({
+        return serializePublicEnvelope(buildPublicEnvelope({
           code: code as ConnectedAccountPublicErrorCode,
           tool: typeof parsed.error.tool === "string" ? parsed.error.tool : "unknown",
           message: typeof parsed.error.message === "string"
@@ -330,7 +337,7 @@ export function normalizeToolErrorMessage(errorMessage: string): string {
   }
 
   if (errorMessage.includes("Input validation error:")) {
-    return JSON.stringify(buildPublicEnvelope({
+    return serializePublicEnvelope(buildPublicEnvelope({
       code: "invalid_tool_arguments",
       tool: extractToolName(errorMessage),
       message: PUBLIC_CODE_MESSAGES.invalid_tool_arguments,
@@ -338,7 +345,7 @@ export function normalizeToolErrorMessage(errorMessage: string): string {
     }));
   }
 
-  return JSON.stringify(buildPublicEnvelope({
+  return serializePublicEnvelope(buildPublicEnvelope({
     code: "internal_error",
     tool: extractToolName(errorMessage),
     message: PUBLIC_CODE_MESSAGES.internal_error,

@@ -8,6 +8,22 @@ import { StatusBadge } from '../components/StatusBadge'
 import { InlineAlert } from '../components/InlineAlert'
 import { CopyButton } from '../components/CopyButton'
 
+const chinaTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false
+})
+
+function formatChinaTime(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : chinaTimeFormatter.format(date)
+}
+
 export function AuditLogsPage() {
   const [logs, setLogs] = useState<AuditLogItem[]>([])
   const [nextCursor, setNextCursor] = useState<string | null>(null)
@@ -128,7 +144,7 @@ export function AuditLogsPage() {
             <Table>
               <thead>
                 <tr>
-                  <th>时间戳</th>
+                  <th>时间戳（北京时间）</th>
                   <th>操作主体 (Actor)</th>
                   <th>动作 (Action)</th>
                   <th>目标资源 (Resource)</th>
@@ -141,7 +157,7 @@ export function AuditLogsPage() {
                 {logs.map((log) => (
                   <tr key={log.id || log.request_id}>
                     <td>
-                      <CodeText>{log.created_at}</CodeText>
+                      <CodeText title={log.created_at}>{formatChinaTime(log.created_at)}</CodeText>
                     </td>
                     <td>
                       <ActorWrap>
@@ -215,8 +231,8 @@ export function AuditLogsPage() {
                 <code>{selectedLog.id}</code>
               </DetailRow>
               <DetailRow>
-                <span>时间:</span>
-                <code>{selectedLog.created_at}</code>
+                <span>时间（北京时间）:</span>
+                <code title={selectedLog.created_at}>{formatChinaTime(selectedLog.created_at)}</code>
               </DetailRow>
               <DetailRow>
                 <span>Actor Type:</span>

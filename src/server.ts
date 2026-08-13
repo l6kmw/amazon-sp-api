@@ -1,18 +1,20 @@
 import { createHash } from "node:crypto";
 import { chmod, lstat, mkdir } from "node:fs/promises";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Pool } from "pg";
+import { Pool, type PoolConfig } from "pg";
 import { createClient } from "redis";
 
 import { PostgresAccountAccessPolicy } from "./account-access-policy.js";
 import { AdminAgentService } from "./admin-agents.js";
+import { LoopbackAdminAdsClient } from "./admin-ads.js";
 import { AdminAuditService } from "./admin-audit.js";
+import { OpenIdAdminOaClient } from "./admin-oa.js";
 import { AdminSessionManager } from "./admin-session.js";
 import { loadConfig, type RuntimeConfig } from "./config.js";
 import { ConnectionService, type AuthorizationIntent } from "./connection-service.js";
 import { AmazonDocumentReader } from "./document-reader.js";
-import { AmazonMcpError } from "./errors.js";
 import { createDevMemoryPool } from "./dev-pool.js";
 import { ConnectedAccountAccountStore } from "./connected-account-accounts.js";
 import { CONNECTED_ACCOUNT_DISCOVERY_MANIFEST, ConnectedAccountJwtVerifier } from "./connected-account.js";
@@ -20,11 +22,11 @@ import { createAmazonMcpHttpApp, type ReadinessResult } from "./http.js";
 import { createAmazonAuthenticator } from "./identity.js";
 import { LwaAccessTokenProvider } from "./lwa.js";
 import { createStructuredLogger } from "./logger.js";
+import { McpArgumentFileLogger } from "./mcp-argument-logger.js";
 import { createAmazonOAuthRouter, type OAuthState } from "./oauth.js";
 import { PUBLIC_MCP_PATH } from "./portal.js";
 import { PostgresConnectedAccountAccountStore } from "./postgres-connected-account-accounts.js";
 import { PostgresRefreshTokenStore } from "./postgres-token-store.js";
-import { PrincipalRequestLimiter } from "./rate-limit.js";
 import { RedisAccessTokenCoordinator } from "./redis-coordinator.js";
 import { FileExpiringStore, RedisExpiringStore } from "./state-store.js";
 import { AmazonSpApiClient } from "./sp-api-client.js";
@@ -41,8 +43,6 @@ import {
 
 export const SERVICE_VERSION = "0.1.0";
 export const SERVICE_PORT = 8789;
-export const MCP_REQUESTS_PER_MINUTE = 120;
-export const MCP_MAX_CONCURRENT_REQUESTS = 8;
 export const CONNECTION_CACHE_TTL_MS = 30_000;
 export const REGION_CACHE_TTL_MS = 86_400_000;
 
@@ -95,17 +95,26 @@ async function secureDataDirectory(config: RuntimeConfig): Promise<void> {
   await chmod(config.dataDirectory, 0o700);
 }
 
+export function productionPostgresPoolConfig(
+  config: Pick<RuntimeConfig, "databaseUrl" | "postgresPool">,
+): PoolConfig {
+  return {
+    connectionString: config.databaseUrl,
+    min: config.postgresPool.min,
+    max: config.postgresPool.max,
+    idleTimeoutMillis: config.postgresPool.idleTimeoutMs,
+    statement_timeout: 40_000,
+    query_timeout: 45_000,
+    connectionTimeoutMillis: 5_000,
+  };
+}
+
 export async function createRuntime(configFile?: string) {
   const config = await loadConfig(configFile);
   await secureDataDirectory(config);
 
   const pool = config.databaseUrl
-    ? new Pool({
-      connectionString: config.databaseUrl,
-      min: config.postgresPool.min,
-      max: config.postgresPool.max,
-      idleTimeoutMillis: config.postgresPool.idleTimeoutMs,
-    })
+    ? new Pool(productionPostgresPoolConfig(config))
     : await createDevMemoryPool();
   const redis = config.redisUrl ? createClient({ url: config.redisUrl }) : undefined;
   const startupCleanup: Array<() => Promise<unknown> | void> = [];
@@ -158,10 +167,12 @@ export async function createRuntime(configFile?: string) {
     .update(currentEncryptionKey)
     .digest("base64url");
   const logger = createStructuredLogger({ hashKey: loggerHashKey, service: "mcp" });
-  const requestLimiter = new PrincipalRequestLimiter({
-    requestsPerMinute: MCP_REQUESTS_PER_MINUTE,
-    maxConcurrent: MCP_MAX_CONCURRENT_REQUESTS,
+  const argumentLogger = new McpArgumentFileLogger({
+    directory: path.join(config.dataDirectory, "logs", "mcp-arguments"),
+    logger,
   });
+  startupCleanup.push(() => argumentLogger.close());
+  await argumentLogger.initialize();
   const accessTokenCoordinator = redis
     ? new RedisAccessTokenCoordinator({ client: redis, namespace: config.redisNamespace })
     : undefined;
@@ -254,7 +265,13 @@ export async function createRuntime(configFile?: string) {
     redisCheck,
   });
   const adminSessions = adminControlEnabled
-    ? new AdminSessionManager({ pool, secret: config.adminSessionSecret! })
+    ? new AdminSessionManager({
+      pool,
+      secret: config.adminSessionSecret!,
+      oaIdentity: config.adminOa
+        ? { issuer: config.adminOa.issuer, subject: config.adminOa.subject }
+        : undefined,
+    })
     : undefined;
   const adminAudits = pool ? new AdminAuditService(pool) : undefined;
   const adminBindingAccounts = adminControlEnabled
@@ -279,25 +296,14 @@ export async function createRuntime(configFile?: string) {
       accountAccessPolicy,
       capabilityTracker,
       documentReader,
-      chargeSpApiCall: (tenantId) => {
-        const limit = requestLimiter.acquire(tenantId);
-        if (!limit.accepted) {
-          throw new AmazonMcpError(
-            "RATE_LIMITED",
-            "Amazon snapshot internal call budget exceeded",
-            true,
-            { retryAfterSeconds: limit.retryAfterSeconds },
-          );
-        }
-        limit.release();
-      },
+      logger,
     }),
     toolCount: 30,
     version: SERVICE_VERSION,
     lwaConfigured: Boolean(config.lwaClientId && config.lwaClientSecret),
     readinessCheck,
     logger,
-    requestLimiter,
+    argumentLogger,
     connected-accountManifest: config.connected-accountEnabled ? CONNECTED_ACCOUNT_DISCOVERY_MANIFEST : undefined,
     connected-accountAccounts,
     adminSessions,
@@ -314,6 +320,17 @@ export async function createRuntime(configFile?: string) {
       toolCount: 30,
       mcpEndpoint: PUBLIC_MCP_PATH,
       connected-accountKeyringConfigured: config.connected-accountEnabled && config.connected-accountJwtKeys.length > 0,
+    } : undefined,
+    adminAds: adminControlEnabled ? new LoopbackAdminAdsClient() : undefined,
+    adminOa: config.adminOa ? {
+      publicOrigin: config.publicOrigin,
+      sessionSecret: config.adminSessionSecret!,
+      scope: config.adminOa.scope,
+      client: new OpenIdAdminOaClient({
+        issuer: config.adminOa.issuer,
+        clientId: config.adminOa.clientId,
+        clientSecret: config.adminOa.clientSecret,
+      }),
     } : undefined,
     portal: {
       publicOrigin: config.publicOrigin,
@@ -346,6 +363,7 @@ export async function createRuntime(configFile?: string) {
       stateStore.close(),
       intentStore.close(),
       accessTokenCoordinator?.close(),
+      argumentLogger.close(),
     ]);
     if (redis?.isOpen) await redis.close();
     if (pool) await pool.end();

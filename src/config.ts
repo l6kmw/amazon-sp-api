@@ -36,6 +36,14 @@ export interface RuntimeConfig {
   connected-accountJwtKeys: ConnectedAccountJwtKey[];
   connected-accountAllowedOrigins: string[];
   adminSessionSecret?: string;
+  adminOa?: {
+    issuer: string;
+    clientId: string;
+    clientSecret: string;
+    subject: string;
+    scope: string;
+    redirectUri: string;
+  };
 }
 
 export class ConfigurationError extends Error {
@@ -121,6 +129,27 @@ function httpsURL(value, path) {
 function optionalHttpsURL(value, path) {
   const raw = string(value, path, { optional: true });
   return raw ? httpsURL(raw, path) : "";
+}
+
+function oidcIssuer(value, path) {
+  const raw = string(value, path, { max: 2048 });
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new ConfigurationError(path, "must be a valid HTTPS URL");
+  }
+  if (
+    parsed.protocol !== "https:"
+    || parsed.username
+    || parsed.password
+    || parsed.search
+    || parsed.hash
+    || parsed.href.includes("/.well-known/")
+  ) {
+    throw new ConfigurationError(path, "must be an HTTPS issuer URL without credentials, query, fragment, or a discovery-document path");
+  }
+  return parsed.toString();
 }
 
 function optionalSection(value, allowed, path) {
@@ -316,7 +345,7 @@ export async function loadConfig(
       identityValidationUrl: "has been removed; MCP now verifies ConnectedAccount JWTs locally",
       identityHealthUrl: "has been removed; readiness no longer calls an external identity service",
       enableListingsTools: "has been removed; Listings tools are always enabled",
-      limits: "has been removed; MCP limits are fixed at 120 requests/minute and 8 concurrent requests",
+      limits: "has been removed; the Provider does not apply local request or concurrency limits",
       cache: "has been removed; connection and region cache TTLs are fixed in the service",
       allowLegacyAuth: "has been removed; MCP accepts only ConnectedAccount Employee JWTs",
       legacyAuthToken: "has been removed; shared bearer tokens are not supported",
@@ -352,7 +381,10 @@ export async function loadConfig(
   const connected-account = optionalSection(root.connected-account, [
     "enabled", "audience", "allowedOrigins", "jwtKeys",
   ], "connected-account");
-  const admin = optionalSection(root.admin, ["sessionSecretFile"], "admin");
+  const admin = optionalSection(root.admin, ["sessionSecretFile", "oa"], "admin");
+  const adminOa = optionalSection(admin.oa, [
+    "issuer", "clientId", "clientSecretFile", "subject", "scopes",
+  ], "admin.oa");
 
   const host = string(server.host, "server.host");
   const allowedHosts = stringList(server.allowedHosts, "server.allowedHosts", { nonEmpty: true });
@@ -446,12 +478,41 @@ export async function loadConfig(
   }
 
   let adminSessionSecret = "";
+  let parsedAdminOa;
   if (root.admin !== undefined) {
     if (!postgresUrl) {
       throw new ConfigurationError("admin", "requires storage.postgres");
     }
     const raw = await readSecretFile(admin.sessionSecretFile, "admin.sessionSecretFile");
     adminSessionSecret = decodeSecretMaterial(raw, "admin.sessionSecretFile", { exactBytes: 32 });
+    if (admin.oa !== undefined) {
+      const clientSecret = await readSecretFile(adminOa.clientSecretFile, "admin.oa.clientSecretFile");
+      if (
+        clientSecret.length < 16
+        || clientSecret.length > 1024
+        || PLACEHOLDER_SECRETS.has(clientSecret.toLowerCase())
+      ) {
+        throw new ConfigurationError("admin.oa.clientSecretFile", "must contain a non-placeholder secret of 16 to 1024 characters");
+      }
+      const scopes = adminOa.scopes === undefined
+        ? ["openid", "profile"]
+        : stringList(adminOa.scopes, "admin.oa.scopes", {
+          nonEmpty: true,
+          maxItems: 20,
+          pattern: /^[A-Za-z0-9._:-]{1,128}$/,
+        });
+      if (!scopes.includes("openid")) {
+        throw new ConfigurationError("admin.oa.scopes", "must include openid");
+      }
+      parsedAdminOa = {
+        issuer: oidcIssuer(adminOa.issuer, "admin.oa.issuer"),
+        clientId: string(adminOa.clientId, "admin.oa.clientId", { min: 3, max: 512 }),
+        clientSecret,
+        subject: string(adminOa.subject, "admin.oa.subject", { max: 512 }),
+        scope: scopes.join(" "),
+        redirectUri: new URL("/api/v1/admin/oa/callback", publicOrigin).toString(),
+      };
+    }
   }
 
   // ConnectedAccount
@@ -516,5 +577,6 @@ export async function loadConfig(
     connected-accountJwtKeys,
     connected-accountAllowedOrigins: connected-accountOrigins,
     adminSessionSecret: adminSessionSecret || undefined,
+    adminOa: parsedAdminOa,
   };
 }

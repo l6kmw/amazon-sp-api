@@ -25,7 +25,13 @@ function StatusTag({ status }: { status: CredentialStatus }) {
   }
 }
 
-export function AccountsPage({ onNavigate }: { onNavigate: (page: string, param?: string) => void }) {
+export function AccountsPage({
+  onNavigate,
+  showHeader = true
+}: {
+  onNavigate: (page: string, param?: string) => void
+  showHeader?: boolean
+}) {
   const [accounts, setAccounts] = useState<SellerAccount[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -59,7 +65,7 @@ export function AccountsPage({ onNavigate }: { onNavigate: (page: string, param?
 
   return (
     <Container>
-      <Header>
+      {showHeader ? <Header>
         <HeaderLeft>
           <Title>Amazon Seller 账号</Title>
           <Subtitle>管理已授权的 Amazon 卖家账号及其 LWA 凭据状态</Subtitle>
@@ -67,7 +73,7 @@ export function AccountsPage({ onNavigate }: { onNavigate: (page: string, param?
         <Button variant="secondary" onClick={loadData} type="button">
           刷新列表
         </Button>
-      </Header>
+      </Header> : null}
 
       {error ? <InlineAlert type="danger">{error}</InlineAlert> : null}
       {loading ? <InlineAlert type="info">正在加载 Seller 账号…</InlineAlert> : null}

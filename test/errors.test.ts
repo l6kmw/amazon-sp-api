@@ -24,6 +24,7 @@ test("maps internal codes to ConnectedAccount public codes", () => {
   assert.equal(mapInternalErrorCode("SELLER_FORBIDDEN"), "forbidden");
   assert.equal(mapInternalErrorCode("AMAZON_ROLE_REQUIRED"), "AMAZON_ROLE_REQUIRED");
   assert.equal(mapInternalErrorCode("RATE_LIMITED"), "rate_limited");
+  assert.equal(mapInternalErrorCode("TIMEOUT"), "timeout");
   assert.equal(mapInternalErrorCode("UPSTREAM_SP_API"), "upstream_error");
   assert.equal(mapInternalErrorCode("INTERNAL"), "internal_error");
   assert.equal(mapInternalErrorCode("AUTH_EXPIRED"), "unauthorized");

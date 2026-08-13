@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 import type { Express, Request, Response } from "express";
 import type { Pool } from "pg";
@@ -16,6 +16,8 @@ export interface AdminSessionClaims {
   userId: "tenant-1";
   username: string;
   role: "admin";
+  authMethod: "password" | "oa";
+  oaIdentityHash?: string;
   csrfToken: string;
   expiresAt: number;
 }
@@ -57,18 +59,36 @@ export class AdminSessionManager {
   readonly #pool: Pool;
   readonly #secret: Buffer;
   readonly #now: () => number;
+  readonly #oaIdentityHash?: string;
   readonly #failures = new Map<string, LoginFailure>();
 
-  constructor(options: { pool: Pool; secret: string; now?: () => number }) {
+  constructor(options: {
+    pool: Pool;
+    secret: string;
+    now?: () => number;
+    oaIdentity?: { issuer: string; subject: string };
+  }) {
     this.#pool = options.pool;
     this.#secret = /^[a-fA-F0-9]{64}$/.test(options.secret)
       ? Buffer.from(options.secret, "hex")
       : Buffer.from(options.secret, "base64");
     if (this.#secret.length !== 32) throw new Error("admin session secret must be 32 bytes");
     this.#now = options.now ?? Date.now;
+    this.#oaIdentityHash = options.oaIdentity
+      ? adminOaIdentityHash(options.oaIdentity.issuer, options.oaIdentity.subject)
+      : undefined;
+  }
+
+  get passwordLoginEnabled(): boolean {
+    return this.#oaIdentityHash === undefined;
+  }
+
+  get oaLoginEnabled(): boolean {
+    return this.#oaIdentityHash !== undefined;
   }
 
   async authenticate(username: string, password: string): Promise<AdminSessionClaims | null> {
+    if (!this.passwordLoginEnabled) return null;
     const result = await this.#pool.query<{
       username: string;
       password_hash: string;
@@ -92,6 +112,28 @@ export class AdminSessionManager {
       userId: "tenant-1",
       username: user.username,
       role: "admin",
+      authMethod: "password",
+      csrfToken: randomBytes(24).toString("base64url"),
+      expiresAt: this.#now() + SESSION_TTL_MS,
+    };
+  }
+
+  async authenticateOa(identity: { issuer: string; subject: string }): Promise<AdminSessionClaims | null> {
+    if (!this.#oaIdentityHash) return null;
+    const identityHash = adminOaIdentityHash(identity.issuer, identity.subject);
+    if (!constantTimeEqual(identityHash, this.#oaIdentityHash)) return null;
+    const result = await this.#pool.query<{ username: string }>(`
+      SELECT username FROM amazon_sp_api.app_user
+      WHERE id = 'tenant-1' AND role = 'admin' AND status = 'active'
+    `);
+    const user = result.rows[0];
+    if (!user) return null;
+    return {
+      userId: "tenant-1",
+      username: user.username,
+      role: "admin",
+      authMethod: "oa",
+      oaIdentityHash: identityHash,
       csrfToken: randomBytes(24).toString("base64url"),
       expiresAt: this.#now() + SESSION_TTL_MS,
     };
@@ -120,10 +162,20 @@ export class AdminSessionManager {
         claims.userId !== "tenant-1"
         || claims.role !== "admin"
         || typeof claims.username !== "string"
+        || !["password", "oa"].includes(claims.authMethod ?? "")
         || typeof claims.csrfToken !== "string"
         || claims.csrfToken.length < 32
         || typeof claims.expiresAt !== "number"
         || claims.expiresAt <= this.#now()
+      ) return null;
+      if (claims.authMethod === "password" && !this.passwordLoginEnabled) return null;
+      if (
+        claims.authMethod === "oa"
+        && (
+          !this.#oaIdentityHash
+          || typeof claims.oaIdentityHash !== "string"
+          || !constantTimeEqual(claims.oaIdentityHash, this.#oaIdentityHash)
+        )
       ) return null;
       return claims as AdminSessionClaims;
     } catch {
@@ -169,22 +221,40 @@ export class AdminSessionManager {
   }
 }
 
-function sessionResponse(claims: AdminSessionClaims | null) {
+function constantTimeEqual(actual: string, expected: string): boolean {
+  const actualBuffer = Buffer.from(actual);
+  const expectedBuffer = Buffer.from(expected);
+  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+function adminOaIdentityHash(issuer: string, subject: string): string {
+  return createHash("sha256").update(`${issuer}\0${subject}`).digest("base64url");
+}
+
+function sessionResponse(sessions: AdminSessionManager, claims: AdminSessionClaims | null) {
+  const capabilities = sessions.oaLoginEnabled ? {
+    login_enabled: false,
+    oa_login_enabled: true,
+    oa_login_url: "/api/v1/admin/oa/login",
+  } : {
+    login_enabled: true,
+  };
   return claims ? {
     auth_enabled: true,
-    login_enabled: true,
+    ...capabilities,
     authenticated: true,
     username: claims.username,
     role: claims.role,
+    ...(claims.authMethod === "oa" ? { auth_method: "oa" } : {}),
     csrf_token: claims.csrfToken,
   } : {
     auth_enabled: true,
-    login_enabled: true,
+    ...capabilities,
     authenticated: false,
   };
 }
 
-function setSessionCookie(response: Response, token: string, expiresAt: number): void {
+export function setAdminSessionCookie(response: Response, token: string, expiresAt: number): void {
   response.cookie(COOKIE_NAME, token, {
     path: "/",
     expires: new Date(expiresAt),
@@ -220,7 +290,7 @@ export function registerAdminSessionRoutes(
   app.get("/api/v1/admin/session", async (request, response) => {
     response.setHeader("cache-control", "no-store");
     try {
-      response.json(sessionResponse(await sessions.session(request)));
+      response.json(sessionResponse(sessions, await sessions.session(request)));
     } catch {
       response.status(500).json({ error: { code: "internal_error", message: "Internal server error" } });
     }
@@ -228,6 +298,10 @@ export function registerAdminSessionRoutes(
 
   app.post("/api/v1/admin/session", async (request, response) => {
     response.setHeader("cache-control", "no-store");
+    if (!sessions.passwordLoginEnabled) {
+      response.status(404).json({ error: { code: "not_found", message: "Not found" } });
+      return;
+    }
     const body = strictBody(request);
     const audit = event(request, response, "admin.login", body?.username ?? "anonymous");
     if (!body) {
@@ -252,8 +326,8 @@ export function registerAdminSessionRoutes(
       }
       sessions.clearFailures(clientKey);
       await audits.record(audit, "success");
-      setSessionCookie(response, sessions.issue(claims), claims.expiresAt);
-      response.json(sessionResponse(claims));
+      setAdminSessionCookie(response, sessions.issue(claims), claims.expiresAt);
+      response.json(sessionResponse(sessions, claims));
     } catch {
       await audits.record(audit, "failed", "internal_error").catch(() => undefined);
       response.status(500).json({ error: { code: "internal_error", message: "Internal server error" } });
@@ -278,7 +352,7 @@ export function registerAdminSessionRoutes(
       }
       await audits.record(audit, "success");
       clearSessionCookie(response);
-      response.json(sessionResponse(null));
+      response.json(sessionResponse(sessions, null));
     } catch {
       await audits.record(audit, "failed", "internal_error").catch(() => undefined);
       response.status(500).json({ error: { code: "internal_error", message: "Internal server error" } });

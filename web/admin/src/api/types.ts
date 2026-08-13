@@ -4,7 +4,13 @@
 
 export interface AdminSession {
   authenticated: boolean
+  auth_enabled?: boolean
+  login_enabled?: boolean
+  oa_login_enabled?: boolean
+  oa_login_url?: string
+  auth_method?: 'oa'
   username?: string
+  role?: 'admin'
   csrf_token?: string
 }
 
@@ -51,6 +57,45 @@ export interface SellerAccountDetail extends SellerAccount {
   }
   last_attempt_status?: string | null
   last_attempt_error?: string | null
+}
+
+export interface AdsAccountBinding {
+  connection_id: string
+  issuer: string
+  employee_id: string
+  status: 'active' | 'unbound'
+  remark: string | null
+  bound_at: string
+  updated_at: string
+  is_owner: boolean
+}
+
+export interface AdsAccount {
+  provider_key: 'amazon-ads'
+  account_id: string
+  connection_id: string
+  external_account_id: string
+  display_name: string
+  status: 'active' | 'disconnected' | 'profile_missing'
+  owner_issuer: string
+  owner_employee_id: string
+  active_bindings_count: number
+  updated_at: string
+  region?: 'na' | 'eu' | 'fe'
+  country_code?: string
+  currency_code?: string
+  account_type?: string
+  marketplace_id?: string
+  bindings: AdsAccountBinding[]
+}
+
+export interface AdsEmployee {
+  issuer: string
+  employee_id: string
+  first_seen_at: string
+  last_seen_at: string
+  active_bindings_count: number
+  total_bindings_count: number
 }
 
 export interface AuthorizationAttempt {

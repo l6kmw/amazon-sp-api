@@ -46,18 +46,19 @@ export const EVENT_FIELD_ALLOWLIST: Readonly<Record<string, readonly string[]>> 
   "mcp.auth.rejected": [],
   "mcp.scope.rejected": ["actor_type", "actor_id_hash"],
   "mcp.tenant.rejected": ["actor_type", "actor_id_hash"],
-  "mcp.rate_limited": ["actor_type", "actor_id_hash"],
   "mcp.request.completed": ["method", "tool", "actor_type", "actor_id_hash"],
   "mcp.request.failed": ["method", "tool", "actor_type", "actor_id_hash"],
   "mcp.tool.completed": ["tool", "actor_type", "actor_id_hash", "issuer_alias"],
   "mcp.tool.failed": ["tool", "actor_type", "actor_id_hash", "issuer_alias"],
+  "mcp.argument_log.failed": ["tool", "actor_type", "actor_id_hash"],
   "mcp.alert.persist_failed": ["tool", "actor_type", "actor_id_hash"],
   "lwa.refresh.completed": ["result", "attempt"],
   "lwa.refresh.failed": ["error_code", "attempt"],
   "lwa.refresh.rotation_skipped": ["reason_code"],
   "lwa.lock.wait": [],
+  "mcp.pagination.budget_exhausted": ["tool", "pages_completed", "budget_ms"],
   "sp_api.request.completed": ["operation", "result", "attempt"],
-  "sp_api.request.failed": ["operation", "error_code", "attempt"],
+  "sp_api.request.failed": ["operation", "error_code", "attempt", "upstream_status"],
   "readiness.check": ["dependency", "status"],
   "config.loaded": ["config_version"],
   "rotation.key": ["key_id", "key_class", "status"],
@@ -163,6 +164,17 @@ function sanitizeField(
       return typeof value === "string" && OPERATIONS.has(value) ? value : "unknown";
     case "attempt":
       return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 10
+        ? value
+        : undefined;
+    case "pages_completed":
+      return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 5
+        ? value
+        : undefined;
+    case "budget_ms":
+      return clampDuration(value);
+    case "upstream_status":
+      return event === "sp_api.request.failed" &&
+        typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599
         ? value
         : undefined;
     case "dependency":

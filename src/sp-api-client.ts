@@ -1,10 +1,14 @@
 import { AmazonMcpError, type AmazonMcpErrorCode } from "./errors.js";
+import { abortAfter, abortableSleep, waitForAbortable } from "./abort.js";
 import { NULL_LOGGER, type StructuredLogger } from "./logger.js";
 import { mcpMetrics } from "./metrics.js";
 
 export type AmazonRegion = "na" | "eu" | "fe";
 
 export type QueryValue = string | number | boolean | readonly string[] | undefined;
+
+const DEFAULT_SLEEP = (milliseconds: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
 export interface SpApiRequestOptions {
   sellingPartnerId: string;
@@ -16,6 +20,8 @@ export interface SpApiRequestOptions {
   query?: Record<string, unknown>;
   body?: unknown;
   retryMode: "safe" | "never";
+  deadlineAt?: number;
+  signal?: AbortSignal;
 }
 
 export interface AccessTokenProvider {
@@ -23,6 +29,7 @@ export interface AccessTokenProvider {
     sellingPartnerId: string,
     tenantId: string,
     forceRefresh?: boolean,
+    signal?: AbortSignal,
   ): Promise<string>;
   /**
    * Optional recovery path used only after Amazon returns a clear token-invalid response.
@@ -32,6 +39,7 @@ export interface AccessTokenProvider {
     sellingPartnerId: string,
     tenantId: string,
     rejectedAccessToken: string,
+    signal?: AbortSignal,
   ): Promise<string>;
 }
 
@@ -42,6 +50,8 @@ export interface SpApiReader {
     region: AmazonRegion;
     path: string;
     query?: Record<string, QueryValue>;
+    deadlineAt?: number;
+    signal?: AbortSignal;
   }): Promise<unknown>;
   request?(options: SpApiRequestOptions): Promise<unknown>;
 }
@@ -57,6 +67,9 @@ const MARKETPLACE_REGIONS: Record<string, AmazonRegion> = {
   A2EUQ1WTGCTBG2: "na",
   A1AM78C64UM0Y8: "na",
   A2Q3Y263D00KWC: "na",
+  A2ZV50J4W1RKNI: "na",
+  A3H6HPSLHAK3XG: "na",
+  A1MQXOICRS2Z7M: "na",
   A1F83G8C2ARO7P: "eu",
   A1PA6795UKMFR9: "eu",
   A13V1IB3VIYZZH: "eu",
@@ -76,6 +89,22 @@ const MARKETPLACE_REGIONS: Record<string, AmazonRegion> = {
   A39IBJ37TRP1C6: "fe",
   A19VAU5U5O7RUS: "fe",
 };
+
+const NONSTANDARD_MARKETPLACE_IDS = new Set([
+  "A2ZV50J4W1RKNI",
+  "A3H6HPSLHAK3XG",
+  "A1MQXOICRS2Z7M",
+]);
+
+export function supportsFbaInventory(marketplaceId: string): boolean {
+  return MARKETPLACE_REGIONS[marketplaceId] !== undefined
+    && !NONSTANDARD_MARKETPLACE_IDS.has(marketplaceId);
+}
+
+export function supportsListingsItems(marketplaceId: string): boolean {
+  return MARKETPLACE_REGIONS[marketplaceId] !== undefined
+    && !NONSTANDARD_MARKETPLACE_IDS.has(marketplaceId);
+}
 
 /**
  * Frozen Amazon SP-API Access Token invalid conditions (2026-07).
@@ -141,6 +170,13 @@ export class SpApiError extends AmazonMcpError {
   }
 }
 
+export class SpApiRequestBudgetExceededError extends AmazonMcpError {
+  constructor() {
+    super("TIMEOUT", "Amazon SP-API request budget exhausted");
+    this.name = "SpApiRequestBudgetExceededError";
+  }
+}
+
 function buildQuery(values: Record<string, QueryValue> | undefined): URLSearchParams {
   const query = new URLSearchParams();
   for (const [name, value] of Object.entries(values ?? {})) {
@@ -169,14 +205,18 @@ function retryDelay(response: Response, attempt: number): number {
   return Math.min(1000 * 2 ** attempt, 8_000);
 }
 
-async function parseSpApiError(response: Response): Promise<{
+async function parseSpApiError(
+  response: Response,
+  readJson: () => Promise<unknown> = () => response.json(),
+  outerSignal?: AbortSignal,
+): Promise<{
   message: string;
   errorCode?: string;
   requestId?: string;
 }> {
   const requestId = response.headers.get("x-amzn-requestid") ?? undefined;
   try {
-    const body = (await response.json()) as { errors?: Array<{ code?: string }> };
+    const body = (await readJson()) as { errors?: Array<{ code?: string }> };
     const errorCode = typeof body.errors?.[0]?.code === "string"
       ? body.errors[0].code
       : undefined;
@@ -187,7 +227,10 @@ async function parseSpApiError(response: Response): Promise<{
       errorCode,
       requestId,
     };
-  } catch {
+  } catch (error) {
+    outerSignal?.throwIfAborted();
+    if (error instanceof SpApiRequestBudgetExceededError) throw error;
+    if (error instanceof AmazonMcpError) throw error;
     return { message: "Amazon SP-API request failed", requestId };
   }
 }
@@ -197,18 +240,26 @@ export class AmazonSpApiClient implements SpApiReader {
   readonly #fetch: typeof fetch;
   readonly #sleep: (milliseconds: number) => Promise<void>;
   readonly #logger: StructuredLogger;
-  readonly #usagePlans = new Map<string, { intervalMs: number; nextAt: number }>();
+  readonly #now: () => number;
+  readonly #requestTimeoutLimitMs: number;
 
   constructor(options: {
     accessTokens: AccessTokenProvider;
     fetchImpl?: typeof fetch;
     sleep?: (milliseconds: number) => Promise<void>;
     logger?: StructuredLogger;
+    now?: () => number;
+    requestTimeoutMs?: number;
   }) {
     this.#accessTokens = options.accessTokens;
     this.#fetch = options.fetchImpl ?? fetch;
-    this.#sleep = options.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+    this.#sleep = options.sleep ?? DEFAULT_SLEEP;
     this.#logger = options.logger ?? NULL_LOGGER;
+    this.#now = options.now ?? Date.now;
+    this.#requestTimeoutLimitMs = options.requestTimeoutMs ?? 30_000;
+    if (!Number.isFinite(this.#requestTimeoutLimitMs) || this.#requestTimeoutLimitMs <= 0) {
+      throw new Error("SP-API request timeout must be positive");
+    }
   }
 
   async get(options: {
@@ -217,6 +268,8 @@ export class AmazonSpApiClient implements SpApiReader {
     region: AmazonRegion;
     path: string;
     query?: Record<string, QueryValue>;
+    deadlineAt?: number;
+    signal?: AbortSignal;
   }): Promise<unknown> {
     return this.request({
       ...options,
@@ -227,167 +280,305 @@ export class AmazonSpApiClient implements SpApiReader {
   }
 
   async request(options: SpApiRequestOptions): Promise<unknown> {
-    let accessToken = await this.#accessTokens.getAccessToken(
-      options.sellingPartnerId,
-      options.tenantId,
-    );
-    let tokenRecoveryUsed = false;
+    const deadlineBudget = options.deadlineAt === undefined
+      ? undefined
+      : abortAfter(
+        options.deadlineAt - this.#now(),
+        new SpApiRequestBudgetExceededError(),
+      );
+    const signal = options.signal && deadlineBudget
+      ? AbortSignal.any([options.signal, deadlineBudget.signal])
+      : options.signal ?? deadlineBudget?.signal;
+    try {
+      this.#assertActive(options.deadlineAt, signal);
+      let accessToken = await waitForAbortable(
+        this.#accessTokens.getAccessToken(
+          options.sellingPartnerId,
+          options.tenantId,
+          undefined,
+          signal,
+        ),
+        signal,
+      );
+      this.#assertActive(options.deadlineAt, signal);
+      let tokenRecoveryUsed = false;
 
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      await this.#awaitUsagePlan(options.operation);
-      const startedAt = performance.now();
-      let response: Response;
-      try {
-        response = await this.#fetch(
-          (() => {
-            const url = new URL(options.path, ENDPOINTS[options.region]);
-            url.search = buildQuery(options.query as Record<string, QueryValue> | undefined).toString();
-            return url;
-          })(),
-          {
-            method: options.method,
-            headers: {
-              accept: "application/json",
-              ...(options.body === undefined ? {} : { "content-type": "application/json" }),
-              "user-agent": "AmazonSpApiService/0.1",
-              "x-amz-access-token": accessToken,
-            },
-            ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
-            signal: AbortSignal.timeout(30_000),
-          },
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const startedAt = performance.now();
+        const requestTimeoutMs = this.#requestTimeoutMs(options.deadlineAt);
+        const requestUsesRemainingBudget = options.deadlineAt !== undefined &&
+          this.#now() + requestTimeoutMs >= options.deadlineAt;
+        const requestTimeout = abortAfter(
+          requestTimeoutMs,
+          requestUsesRemainingBudget
+            ? new SpApiRequestBudgetExceededError()
+            : new DOMException("Amazon SP-API request timed out", "TimeoutError"),
         );
-      } catch {
-        const operation = options.operation;
-        this.#logger.write("error", "sp_api.request.failed", {
-          operation,
-          attempt: attempt + 1,
-          duration_ms: Math.round((performance.now() - startedAt) * 10) / 10,
-          error_code: "timeout",
-          result: "error",
-        });
-        mcpMetrics.inc("sp_api_errors_total", "SP-API transport errors", {
-          operation,
-          error_code: "timeout",
-        });
-        if (options.retryMode === "safe" && attempt < 2) {
-          await this.#sleep(Math.min(1000 * 2 ** attempt, 8_000));
-          continue;
-        }
-        throw new AmazonMcpError(
-          "UPSTREAM_SP_API",
-          "Amazon SP-API network request failed",
-          true,
-        );
-      }
-
-      const operation = options.operation;
-      this.#updateUsagePlan(operation, response.headers.get("x-amzn-ratelimit-limit"));
-      const durationMs = Math.round((performance.now() - startedAt) * 10) / 10;
-      this.#logger.write(response.ok ? "info" : "warn", response.ok
-        ? "sp_api.request.completed"
-        : "sp_api.request.failed", {
-        operation,
-        attempt: attempt + 1,
-        duration_ms: durationMs,
-        ...(response.ok
-          ? { result: "success" as const }
-          : {
-            result: "error" as const,
-            error_code: response.status === 429
-              ? "rate_limited" as const
-              : "upstream_error" as const,
-          }),
-      });
-      mcpMetrics.observeSeconds("sp_api_duration_seconds", "SP-API request duration", durationMs / 1000, {
-        operation,
-        result: response.ok ? "success" : "error",
-      });
-      if (response.status === 429) {
-        mcpMetrics.inc("sp_api_errors_total", "SP-API transport errors", {
-          operation,
-          error_code: "rate_limited",
-        });
-      } else if (response.status >= 500) {
-        mcpMetrics.inc("sp_api_errors_total", "SP-API transport errors", {
-          operation,
-          error_code: "upstream_error",
-        });
-      }
-
-      if (!response.ok) {
-        const parsed = await parseSpApiError(response);
-        if (
-          isAmazonAccessTokenInvalidError({
-            status: response.status,
-            errorCode: parsed.errorCode,
-          }) &&
-          !tokenRecoveryUsed
-        ) {
-          tokenRecoveryUsed = true;
-          const rejected = accessToken;
-          const recovered = this.#accessTokens.recoverAccessToken
-            ? await this.#accessTokens.recoverAccessToken(
-              options.sellingPartnerId,
-              options.tenantId,
-              rejected,
-            )
-            : await this.#accessTokens.getAccessToken(
-              options.sellingPartnerId,
-              options.tenantId,
+        const requestSignal = signal
+          ? AbortSignal.any([signal, requestTimeout.signal])
+          : requestTimeout.signal;
+        try {
+          let response: Response;
+          try {
+            response = await this.#fetch(
+              (() => {
+                const url = new URL(options.path, ENDPOINTS[options.region]);
+                url.search = buildQuery(
+                  options.query as Record<string, QueryValue> | undefined,
+                ).toString();
+                return url;
+              })(),
+              {
+                method: options.method,
+                headers: {
+                  accept: "application/json",
+                  ...(options.body === undefined ? {} : { "content-type": "application/json" }),
+                  "user-agent": "AmazonSpApiService/0.1",
+                  "x-amz-access-token": accessToken,
+                },
+                ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+                signal: requestSignal,
+              },
+            );
+          } catch (error) {
+            const operation = options.operation;
+            const errorCode = requestSignal.aborted ? "timeout" : "upstream_error";
+            this.#logger.write("error", "sp_api.request.failed", {
+              operation,
+              attempt: attempt + 1,
+              duration_ms: Math.round((performance.now() - startedAt) * 10) / 10,
+              error_code: errorCode,
+              result: "error",
+            });
+            mcpMetrics.inc("sp_api_errors_total", "SP-API transport errors", {
+              operation,
+              error_code: errorCode,
+            });
+            if (signal?.aborted) signal.throwIfAborted();
+            if (requestTimeout.signal.reason instanceof SpApiRequestBudgetExceededError) {
+              throw requestTimeout.signal.reason;
+            }
+            if (options.retryMode === "safe" && attempt < 2) {
+              await this.#sleepWithinBudget(
+                Math.min(1000 * 2 ** attempt, 8_000),
+                options.deadlineAt,
+                signal,
+              );
+              continue;
+            }
+            throw new AmazonMcpError(
+              "UPSTREAM_SP_API",
+              "Amazon SP-API network request failed",
               true,
             );
-          if (recovered === rejected) {
-            throw new SpApiError(response.status, parsed.message, parsed.requestId, parsed.errorCode);
           }
-          accessToken = recovered;
-          // Retry the same logical request once with the recovered token.
-          attempt -= 1;
-          continue;
-        }
+          const operation = options.operation;
+          const durationMs = Math.round((performance.now() - startedAt) * 10) / 10;
+          this.#logger.write(response.ok ? "info" : "warn", response.ok
+            ? "sp_api.request.completed"
+            : "sp_api.request.failed", {
+            operation,
+            attempt: attempt + 1,
+            duration_ms: durationMs,
+            ...(response.ok
+              ? { result: "success" as const }
+              : {
+                result: "error" as const,
+                upstream_status: response.status,
+                error_code: response.status === 429
+                  ? "rate_limited" as const
+                  : "upstream_error" as const,
+              }),
+          });
+          mcpMetrics.observeSeconds(
+            "sp_api_duration_seconds",
+            "SP-API request duration",
+            durationMs / 1000,
+            {
+              operation,
+              result: response.ok ? "success" : "error",
+            },
+          );
+          if (response.status === 429) {
+            mcpMetrics.inc("sp_api_errors_total", "SP-API transport errors", {
+              operation,
+              error_code: "rate_limited",
+            });
+          } else if (response.status >= 500) {
+            mcpMetrics.inc("sp_api_errors_total", "SP-API transport errors", {
+              operation,
+              error_code: "upstream_error",
+            });
+          }
 
-        if (
-          options.retryMode === "safe" &&
-          (response.status === 429 || response.status >= 500) &&
-          attempt < 2
-        ) {
-          await this.#sleep(retryDelay(response, attempt));
-          continue;
-        }
+          if (!response.ok) {
+            const parsed = await parseSpApiError(
+              response,
+              () => this.#readResponseJson(
+                response,
+                options.deadlineAt,
+                requestSignal,
+              ),
+              signal,
+            );
+            if (
+              isAmazonAccessTokenInvalidError({
+                status: response.status,
+                errorCode: parsed.errorCode,
+              }) &&
+              !tokenRecoveryUsed
+            ) {
+              tokenRecoveryUsed = true;
+              const rejected = accessToken;
+              const recovered = await waitForAbortable(
+                this.#accessTokens.recoverAccessToken
+                  ? this.#accessTokens.recoverAccessToken(
+                    options.sellingPartnerId,
+                    options.tenantId,
+                    rejected,
+                    signal,
+                  )
+                  : this.#accessTokens.getAccessToken(
+                    options.sellingPartnerId,
+                    options.tenantId,
+                    true,
+                    signal,
+                  ),
+                signal,
+              );
+              if (recovered === rejected) {
+                throw new SpApiError(
+                  response.status,
+                  parsed.message,
+                  parsed.requestId,
+                  parsed.errorCode,
+                );
+              }
+              accessToken = recovered;
+              this.#assertActive(options.deadlineAt, signal);
+              // Retry the same logical request once with the recovered token.
+              attempt -= 1;
+              continue;
+            }
 
-        throw new SpApiError(response.status, parsed.message, parsed.requestId, parsed.errorCode);
+            if (
+              options.retryMode === "safe" &&
+              (response.status === 429 || response.status >= 500) &&
+              attempt < 2
+            ) {
+              await this.#sleepWithinBudget(
+                retryDelay(response, attempt),
+                options.deadlineAt,
+                signal,
+              );
+              continue;
+            }
+
+            throw new SpApiError(
+              response.status,
+              parsed.message,
+              parsed.requestId,
+              parsed.errorCode,
+            );
+          }
+
+          if (response.status === 204) return {};
+          try {
+            return await this.#readResponseJson(
+              response,
+              options.deadlineAt,
+              requestSignal,
+            );
+          } catch (error) {
+            signal?.throwIfAborted();
+            if (error instanceof SpApiRequestBudgetExceededError) throw error;
+            if (error instanceof AmazonMcpError) throw error;
+            throw new AmazonMcpError(
+              "UPSTREAM_SP_API",
+              "Amazon SP-API response was not valid JSON",
+              true,
+              { status: response.status },
+            );
+          }
+        } finally {
+          requestTimeout.dispose();
+        }
       }
 
-      if (response.status === 204) return {};
-      try {
-        return await response.json();
-      } catch {
+      throw new SpApiError(502, "Amazon SP-API retry limit exceeded");
+    } finally {
+      deadlineBudget?.dispose();
+    }
+  }
+
+  #assertWithinBudget(deadlineAt?: number): void {
+    if (deadlineAt !== undefined && this.#now() >= deadlineAt) {
+      throw new SpApiRequestBudgetExceededError();
+    }
+  }
+
+  #assertActive(deadlineAt?: number, signal?: AbortSignal): void {
+    signal?.throwIfAborted();
+    this.#assertWithinBudget(deadlineAt);
+  }
+
+  #requestTimeoutMs(deadlineAt?: number): number {
+    if (deadlineAt === undefined) return this.#requestTimeoutLimitMs;
+    const remainingMs = deadlineAt - this.#now();
+    if (remainingMs <= 0) throw new SpApiRequestBudgetExceededError();
+    return Math.max(1, Math.min(this.#requestTimeoutLimitMs, Math.ceil(remainingMs)));
+  }
+
+  async #sleepWithinBudget(
+    milliseconds: number,
+    deadlineAt?: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const now = this.#now();
+    if (deadlineAt !== undefined && now + milliseconds >= deadlineAt) {
+      throw new SpApiRequestBudgetExceededError();
+    }
+    if (this.#sleep === DEFAULT_SLEEP) await abortableSleep(milliseconds, signal);
+    else await waitForAbortable(this.#sleep(milliseconds), signal);
+    this.#assertActive(deadlineAt, signal);
+  }
+
+  async #readResponseJson(
+    response: Response,
+    deadlineAt: number | undefined,
+    requestSignal: AbortSignal,
+  ): Promise<unknown> {
+    try {
+      return await waitForAbortable(response.json(), requestSignal);
+    } catch (error) {
+      if (requestSignal.aborted) {
+        try {
+          void response.body?.cancel().catch(() => {});
+        } catch {
+          // The body may already have been cancelled by fetch.
+        }
+      }
+      if (
+        error instanceof SpApiRequestBudgetExceededError ||
+        (deadlineAt !== undefined &&
+          (this.#now() >= deadlineAt ||
+            requestSignal.reason instanceof SpApiRequestBudgetExceededError))
+      ) {
+        throw new SpApiRequestBudgetExceededError();
+      }
+      if (
+        requestSignal.aborted &&
+        requestSignal.reason instanceof DOMException &&
+        requestSignal.reason.name === "TimeoutError"
+      ) {
         throw new AmazonMcpError(
           "UPSTREAM_SP_API",
-          "Amazon SP-API response was not valid JSON",
+          "Amazon SP-API response timed out",
           true,
           { status: response.status },
         );
       }
+      throw error;
     }
-
-    throw new SpApiError(502, "Amazon SP-API retry limit exceeded");
-  }
-
-  async #awaitUsagePlan(operation: string): Promise<void> {
-    const plan = this.#usagePlans.get(operation);
-    if (!plan) return;
-    const now = Date.now();
-    const waitMs = Math.max(0, plan.nextAt - now);
-    plan.nextAt = Math.max(now, plan.nextAt) + plan.intervalMs;
-    if (waitMs > 0) await this.#sleep(Math.min(waitMs, 30_000));
-  }
-
-  #updateUsagePlan(operation: string, value: string | null): void {
-    const rate = value ? Number(value) : Number.NaN;
-    if (!Number.isFinite(rate) || rate <= 0) return;
-    const intervalMs = Math.max(1, Math.ceil(1000 / rate));
-    const current = this.#usagePlans.get(operation);
-    if (current) current.intervalMs = intervalMs;
-    else this.#usagePlans.set(operation, { intervalMs, nextAt: Date.now() + intervalMs });
   }
 }

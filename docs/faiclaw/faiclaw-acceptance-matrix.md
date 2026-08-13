@@ -1,6 +1,6 @@
 # Amazon SP-API ConnectedAccount 账号型 MCP 验收矩阵
 
-> `通过` 必须有 example 自动化测试、请求/响应摘要或安全日志证据。不得记录 Token、Secret、授权码或带签名 URL。
+> `通过` 必须有 example 自动化测试、请求/响应摘要或安全日志证据。普通 stdout、PostgreSQL、指标和告警不得记录 Token、Secret、授权码或带签名 URL；完整 `tools/call` arguments 仅按本表的受限 168 小时 JSONL 例外处理。
 >
 > 本表上方是当前目标契约；下方带日期的部署记录是历史验收证据，不代表当前仍保留旧鉴权或双服务架构。
 
@@ -50,7 +50,7 @@
 | E | Document | Reports/Data Kiosk/Feed 分页 | 每页≤200 条且≤256 KiB；游标 15 分钟、绑定 Employee/账号/文档 | `test/document-reader.test.ts`；GZIP、轮换、篡改、跨 Employee 重放 | 通过 |
 | E | Network | 身份服务 | 启动和请求期间不访问宿主机 8080，readiness 无 identity | `src/server.ts`、`test/http.test.ts`、静态扫描 | 通过 |
 | E | Log | 成功/失败/鉴权/协议 | request ID、结果、耗时和安全摘要齐全 | M4：事件字典白名单；`mcp.*.`/`lwa.*`/`sp_api.*` | 通过 |
-| E | Log | 敏感参数 | Token、query、revision、幂等键不出现 | logger 丢弃未知字段；测试 canary | 通过 |
+| E | Log | 敏感参数 | 完整 `tools/call` arguments 仅进入受限 JSONL 并保留 168 小时；普通 stdout、PostgreSQL、指标和告警均不包含 | `test/mcp-argument-logger.test.ts`、`test/http.test.ts`：隔离、权限、清理、失败降级及普通日志泄漏 | 通过 |
 | E | Network | URL（只读脚本） | 协议/userinfo/query/fragment/redirect/timeout/1MiB | `scripts/test_verify_connected-account_account_mcp.py` 覆盖 | 通过 |
 | E | Network | 文件/Webhook 输入 | 产品不接受 | 工具 input Schema 无 URL/file/webhook；设计规格 §9 | 不适用（有设计依据） |
 | E | Queue | Worker 重试 | 有上限、退避、dead-letter/unknown | 当前无异步 Queue/Worker；设计禁止虚构指标 | 不适用（有设计依据） |
@@ -66,7 +66,7 @@
 
 - 可通过输入 tenant、user、employee 或 account 绕过当前 Employee 范围。
 - JWT 签名、kid、issuer、audience、时间或 Scope 校验不完整。
-- Token、Secret、授权 code/state 或敏感业务内容出现在输出、页面或日志。
+- Token、Secret、授权 code/state 或敏感业务内容出现在输出、页面、普通 stdout、PostgreSQL、指标或告警；完整 `tools/call` arguments 仅允许按受限 JSONL、保留 168 小时的明确例外存储。
 - 授权 state 可复用、可跨 Employee 消费，或归属由浏览器参数决定。
 - Disconnect/Unbind 会误删其他有效绑定或底层凭据。
 - MCP 错误进入成功 output Schema，导致真实错误丢失。

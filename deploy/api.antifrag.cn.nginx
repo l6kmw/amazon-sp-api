@@ -61,6 +61,20 @@ server {
         proxy_read_timeout 15s;
     }
 
+    location = /company {
+        proxy_pass http://127.0.0.1:8789;
+        include /etc/nginx/proxy_params;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 15s;
+    }
+
+    location = /privacy {
+        proxy_pass http://127.0.0.1:8789;
+        include /etc/nginx/proxy_params;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 15s;
+    }
+
     location ^~ /assets/ {
         proxy_pass http://127.0.0.1:8789;
         include /etc/nginx/proxy_params;
@@ -89,6 +103,13 @@ server {
         proxy_read_timeout 15s;
     }
 
+    location ^~ /oauth/amazon-ads/ {
+        proxy_pass http://127.0.0.1:8790;
+        include /etc/nginx/proxy_params;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 30s;
+    }
+
     location = /mcp/amazon {
         proxy_pass http://127.0.0.1:8789/mcp;
         include /etc/nginx/proxy_params;
@@ -105,6 +126,22 @@ server {
         proxy_read_timeout 15s;
     }
 
+    location = /mcp/amazon-ads {
+        proxy_pass http://127.0.0.1:8790/mcp;
+        include /etc/nginx/proxy_params;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 300s;
+    }
+
+    location = /mcp/amazon-ads/healthz {
+        proxy_pass http://127.0.0.1:8790/healthz;
+        include /etc/nginx/proxy_params;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 15s;
+    }
+
     location = /.well-known/connected-account {
         proxy_pass http://127.0.0.1:8789;
         include /etc/nginx/proxy_params;
@@ -114,6 +151,21 @@ server {
 
     location /connected-account/v1/ {
         proxy_pass http://127.0.0.1:8789;
+        include /etc/nginx/proxy_params;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 30s;
+    }
+
+    # Configure the Ads Provider base URL as https://$host/amazon-ads.
+    location = /amazon-ads/.well-known/connected-account {
+        proxy_pass http://127.0.0.1:8790/.well-known/connected-account;
+        include /etc/nginx/proxy_params;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 15s;
+    }
+
+    location ^~ /amazon-ads/connected-account/v1/ {
+        proxy_pass http://127.0.0.1:8790/connected-account/v1/;
         include /etc/nginx/proxy_params;
         proxy_connect_timeout 3s;
         proxy_read_timeout 30s;

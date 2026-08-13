@@ -17,6 +17,7 @@ export type AmazonMcpErrorCode =
   | "UPSTREAM_SP_API"
   | "UPSTREAM_OAUTH"
   | "UPSTREAM_LWA"
+  | "TIMEOUT"
   | "INTERNAL";
 
 /** Public ConnectedAccount tool error codes (snake_case). */
@@ -88,6 +89,7 @@ const PUBLIC_ERROR_MESSAGES: Readonly<Record<AmazonMcpErrorCode, string>> = {
   UPSTREAM_SP_API: "Amazon SP-API request failed",
   UPSTREAM_OAUTH: "Amazon OAuth service request failed",
   UPSTREAM_LWA: "Amazon LWA token exchange failed",
+  TIMEOUT: "Amazon SP-API request budget exhausted",
   INTERNAL: "Amazon MCP tool failed unexpectedly",
 };
 
@@ -151,6 +153,7 @@ const INTERNAL_TO_PUBLIC: Readonly<Record<AmazonMcpErrorCode, ConnectedAccountPu
   UPSTREAM_SP_API: "upstream_error",
   UPSTREAM_OAUTH: "upstream_error",
   UPSTREAM_LWA: "upstream_error",
+  TIMEOUT: "timeout",
   INTERNAL: "internal_error",
 };
 

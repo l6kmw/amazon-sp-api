@@ -4,9 +4,11 @@ import { Card } from '../components/Card'
 import { Button } from '../components/Button'
 import { InlineAlert } from '../components/InlineAlert'
 import { loginAdmin } from '../api/auth'
+import type { AdminSession } from '../api/types'
 
 type LoginPageProps = {
-  onAuthenticated: () => void
+  session: AdminSession
+  onAuthenticated: (session: AdminSession) => void
 }
 
 const iconAttrs = {
@@ -36,7 +38,7 @@ function ShieldIcon() {
   )
 }
 
-export function LoginPage({ onAuthenticated }: LoginPageProps) {
+export function LoginPage({ session, onAuthenticated }: LoginPageProps) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -51,7 +53,7 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
     try {
       const session = await loginAdmin(username, password)
       if (session.authenticated) {
-        onAuthenticated()
+        onAuthenticated(session)
         return
       }
       setError('登录凭据无效，请确认管理员账号密码后重试。')
@@ -78,17 +80,32 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
         <CopyBlock>
           <SecurityBadge>
             <ShieldIcon />
-            仅管理员访问
+            {session.oa_login_enabled ? '统一 OA 身份' : '仅管理员访问'}
           </SecurityBadge>
           <Title>登录控制台</Title>
-          <Description>请输入平台管理员凭据，管理 Amazon Seller 账号与 MCP 配置。</Description>
+          <Description>
+            {session.oa_login_enabled
+              ? '使用统一 OA 管理员身份登录。'
+              : '请输入平台管理员凭据，管理 Amazon Seller 账号与 MCP 配置。'}
+          </Description>
         </CopyBlock>
 
         {error ? (
           <InlineAlert type="danger">{error}</InlineAlert>
         ) : null}
 
-        <Form onSubmit={handleSubmit}>
+        {session.oa_login_enabled && session.oa_login_url ? (
+          <Button
+            variant="primary"
+            type="button"
+            onClick={() => window.location.assign(session.oa_login_url!)}
+            style={{ width: '100%' }}
+          >
+            使用统一 OA 登录
+          </Button>
+        ) : null}
+
+        {session.login_enabled !== false ? <Form onSubmit={handleSubmit}>
           <Field>
             <Label htmlFor="admin-username">账号</Label>
             <Input
@@ -125,7 +142,7 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
           >
             {submitting ? '登录中…' : '登录控制台'}
           </Button>
-        </Form>
+        </Form> : null}
       </LoginPanel>
     </Shell>
   )

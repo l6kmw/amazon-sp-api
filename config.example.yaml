@@ -88,9 +88,28 @@ storage:
     # 多套环境共用 Redis 时应使用不同命名空间，避免测试与生产数据冲突。
 #     namespace: "amazon-sp-api"
 
+# 管理控制面需要 PostgreSQL 和 32 字节 Session Secret。配置 oa 后，本地账号密码登录会关闭，
+# 浏览器改走标准 OIDC Authorization Code + PKCE；OA 成功后仍签发本服务的 HttpOnly/Strict Session。
+# admin:
+  # 必填。绝对路径、普通文件、权限 0600 或更严格；内容为高熵 32 字节 base64 或 64 位十六进制。
+  # sessionSecretFile: "/run/secrets/amazon-admin-session"
+  # 可选。省略时保留本地管理员密码登录；启用时 issuer + subject 必须同时匹配才映射到固定管理员。
+  # oa:
+    # OIDC Issuer 必须是 HTTPS，不能包含凭据、查询、fragment 或直接 discovery 文档路径。
+    # issuer: "https://oa.example.com/tenant"
+    # OA 中登记的本管理控制台 Client ID。
+    # clientId: "amazon-admin"
+    # OIDC Client Secret 文件；绝对路径、普通文件、权限 0600 或更严格，内容至少 16 字符。
+    # clientSecretFile: "/run/secrets/amazon-admin-oa-client"
+    # 唯一允许成为 tenant-1 管理员的 OIDC sub；其他有效 OA 用户仍会被拒绝。
+    # subject: "replace-with-oa-admin-subject"
+    # 可选，默认 [openid, profile]；必须包含 openid。
+    # scopes: ["openid", "profile"]
+    # 回调固定由 amazon.publicOrigin 推导为 /api/v1/admin/oa/callback，不接受自定义 redirect URI。
+
 # ConnectedAccount Connected Account Protocol 与 Employee JWT 配置；安全管理控制面启用时，MCP 还接受数据库中 active Test Agent 的独立 oat_* Token。
-# 已删除整个 mcp 配置分区：Listings 固定开启，限流固定为每租户 120 次/分钟和 8 并发，
-# 连接/区域缓存固定为 30 秒/24 小时，不再访问 host.docker.internal:8080 或其他身份校验服务。
+# 已删除整个 mcp 配置分区：Listings 固定开启，Provider 不实施入口或 usage-plan 本地限流，
+# 连接/区域缓存固定为 30 秒/24 小时；Amazon 429 仍按上游限流错误处理。不再访问 host.docker.internal:8080 或其他身份校验服务。
 # 默认关闭；关闭时 OAuth、healthz 和 readyz 仍可用，Employee JWT 失败关闭；若 PostgreSQL 与私密 admin.sessionSecretFile 均配置，active oat_* Test Agent 仍可使用 /mcp。
 # 启用后必须同时配置 storage.postgres、storage.redis、amazon.credentialKeys 以及下方 audience、allowedOrigins、jwtKeys。
 connected-account:

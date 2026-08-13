@@ -6,7 +6,7 @@ import { ErrorBoundary } from './ErrorBoundary'
 import { AppShell, type PageID } from './components/AppShell'
 import { LoginPage } from './pages/LoginPage'
 import { DashboardPage } from './pages/DashboardPage'
-import { AccountsPage } from './pages/AccountsPage'
+import { AmazonConnectionsPage } from './pages/AmazonConnectionsPage'
 import { AccountDetailPage } from './pages/AccountDetailPage'
 import { AmazonSetupPage } from './pages/AmazonSetupPage'
 import { CapabilitiesPage } from './pages/CapabilitiesPage'
@@ -15,6 +15,7 @@ import { ConnectedAccountEmployeesPage } from './pages/ConnectedAccountEmployees
 import { TestAgentsPage } from './pages/TestAgentsPage'
 import { AuditLogsPage } from './pages/AuditLogsPage'
 import { getAdminSession, logoutAdmin } from './api/auth'
+import type { AdminSession } from './api/types'
 
 function parseHash(hash: string): { page: PageID; accountId?: string } {
   const clean = hash.replace(/^#\/?/, '')
@@ -46,7 +47,7 @@ function parseHash(hash: string): { page: PageID; accountId?: string } {
 }
 
 export function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
+  const [session, setSession] = useState<AdminSession | null>(null)
   const [route, setRoute] = useState<{ page: PageID; accountId?: string }>(() => parseHash(window.location.hash))
 
   useEffect(() => {
@@ -60,7 +61,13 @@ export function App() {
 
   useEffect(() => {
     const handleSessionExpired = () => {
-      setIsAuthenticated(false)
+      setSession((current) => ({
+        authenticated: false,
+        auth_enabled: current?.auth_enabled,
+        login_enabled: current?.login_enabled,
+        oa_login_enabled: current?.oa_login_enabled,
+        oa_login_url: current?.oa_login_url
+      }))
     }
 
     window.addEventListener('admin-session-expired', handleSessionExpired)
@@ -72,14 +79,12 @@ export function App() {
     async function checkSession() {
       try {
         const session = await getAdminSession()
-        if (session.authenticated) {
-          setIsAuthenticated(true)
-          return
-        }
+        setSession(session)
+        return
       } catch {
         // Fallback for offline / unauthenticated states
       }
-      setIsAuthenticated(false)
+      setSession({ authenticated: false, login_enabled: true })
     }
 
     checkSession()
@@ -101,18 +106,24 @@ export function App() {
     } catch {
       // Ignore
     }
-    setIsAuthenticated(false)
+    setSession((current) => ({
+      authenticated: false,
+      auth_enabled: current?.auth_enabled,
+      login_enabled: current?.login_enabled,
+      oa_login_enabled: current?.oa_login_enabled,
+      oa_login_url: current?.oa_login_url
+    }))
   }
 
-  if (isAuthenticated === null) {
+  if (session === null) {
     return null // Initial session loading spinner or blank
   }
 
-  if (!isAuthenticated) {
+  if (!session.authenticated) {
     return (
       <ThemeProvider theme={theme}>
         <GlobalStyles />
-        <LoginPage onAuthenticated={() => setIsAuthenticated(true)} />
+        <LoginPage session={session} onAuthenticated={setSession} />
       </ThemeProvider>
     )
   }
@@ -124,7 +135,7 @@ export function App() {
         <AppShell currentPage={route.page} onNavigate={navigate} onLogout={handleLogout}>
           {route.page === 'dashboard' && <DashboardPage />}
           {route.page === 'accounts' && (
-            <AccountsPage onNavigate={(page, accountId) => navigate(page as PageID, accountId)} />
+            <AmazonConnectionsPage onNavigate={(page, accountId) => navigate(page as PageID, accountId)} />
           )}
           {route.page === 'account-detail' && (
             <AccountDetailPage accountId={route.accountId} onBack={() => navigate('accounts')} />

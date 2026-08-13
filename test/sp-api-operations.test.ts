@@ -83,6 +83,42 @@ test("generated domain schemas reject arbitrary paths, methods and write actions
   }));
 });
 
+test("Orders discovery and secondary validation keep GET filters in query", () => {
+  const schema = domainInputSchema("orders");
+  const search = {
+    action: "searchOrders",
+    account_id: "acct_0123456789abcdef",
+    region: "na" as const,
+    query: {
+      createdAfter: "2026-08-01T00:00:00.000Z",
+      marketplaceIds: ["ATVPDKIKX0DER"],
+      maxResultsPerPage: 20,
+    },
+  };
+  assert.doesNotThrow(() => schema.parse(search));
+  assert.doesNotThrow(() => validateOperationInput(operationForAction("orders", "searchOrders"), search));
+  assert.doesNotThrow(() => validateOperationInput(operationForAction("orders", "getOrder"), {
+    action: "getOrder",
+    account_id: "acct_0123456789abcdef",
+    region: "na",
+    path: { orderId: "ORDER-1" },
+  }));
+
+  for (const invalid of [
+    { ...search, body: search.query },
+    { ...search, query: { ...search.query, autoPage: false } },
+    { ...search, path: { createdAfter: search.query.createdAfter } },
+  ]) assert.throws(() => schema.parse(invalid));
+
+  assert.throws(
+    () => validateOperationInput(operationForAction("orders", "searchOrders"), {
+      ...search,
+      path: { orderId: "ORDER-1" },
+    }),
+    (error: unknown) => (error as { code?: string }).code === "INVALID_FILTER",
+  );
+});
+
 test("rejects Orders PII segments and unknown Data Kiosk schemas", () => {
   const orders = operationForAction("orders", "searchOrders");
   assert.throws(() => validateOperationPolicy(orders, {
@@ -105,6 +141,70 @@ test("rejects Orders PII segments and unknown Data Kiosk schemas", () => {
     "{ analytics_vendorAnalytics_2024_09_30 { sourcingView { asin } } }",
     "{ analytics_salesAndTraffic_2024_04_24 { unknownField } }",
   ]) assert.throws(() => validateOperationPolicy(dataKiosk, { body: { query } }));
+});
+
+test("enforces FBA Inventory marketplace support before an upstream request", async () => {
+  let upstreamCalls = 0;
+  const execute = (marketplaceId: string) => executeReadOperation({
+    client: {
+      async get() { return {}; },
+      async request() {
+        upstreamCalls += 1;
+        return {};
+      },
+    },
+    operation: operationForAction("inventory", "getInventorySummaries"),
+    tenantId: "workspace-1",
+    accountId: "acct_0123456789abcdef",
+    sellingPartnerId: "A1SELLER",
+    region: "na",
+    input: {
+      query: {
+        details: false,
+        granularityType: "Marketplace",
+        granularityId: marketplaceId,
+        marketplaceIds: [marketplaceId],
+      },
+    },
+  });
+  await assert.rejects(execute("A2ZV50J4W1RKNI"), /not supported by FBA Inventory/);
+  assert.equal(upstreamCalls, 0);
+  await execute("ATVPDKIKX0DER");
+  assert.equal(upstreamCalls, 1);
+});
+
+test("enforces Listings marketplace support before every generic upstream request", async () => {
+  let upstreamCalls = 0;
+  const client = {
+    async get() { return {}; },
+    async request() {
+      upstreamCalls += 1;
+      return {};
+    },
+  };
+  for (const action of ["getListingsItem", "searchListingsItems", "getListingsRestrictions"]) {
+    await assert.rejects(executeReadOperation({
+      client,
+      operation: operationForAction("listings", action),
+      tenantId: "tenant-1",
+      accountId: "acct_0123456789abcdef",
+      sellingPartnerId: "A1SELLER",
+      region: "na",
+      input: { query: { marketplaceIds: ["A2ZV50J4W1RKNI"] } },
+    }), (error: unknown) => (error as { code?: string }).code === "INVALID_FILTER");
+  }
+  assert.equal(upstreamCalls, 0);
+
+  await executeReadOperation({
+    client,
+    operation: operationForAction("listings", "searchListingsItems"),
+    tenantId: "tenant-1",
+    accountId: "acct_0123456789abcdef",
+    sellingPartnerId: "A1SELLER",
+    region: "na",
+    input: { query: { marketplaceIds: ["ATVPDKIKX0DER"] } },
+  });
+  assert.equal(upstreamCalls, 1);
 });
 
 test("only explicitly allowlisted query POST/PUT/DELETE operations are callable", () => {

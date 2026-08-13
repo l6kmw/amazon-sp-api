@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join, normalize } from "node:path";
 
@@ -27,6 +27,8 @@ const agent = {
   last_used_at: null,
 };
 let authenticated = false;
+let oaMode = false;
+let oaLoginRequests = 0;
 let unbindRequestURL = "";
 let disconnectRequestURL = "";
 let authorizationRequestBody = "";
@@ -34,6 +36,10 @@ let authorizationPolls = 0;
 let openedAuthorizationURL = "";
 let shareRequest = { url: "", body: "" };
 let refreshRequests = 0;
+let accountDetailRequests = 0;
+let adsShareRequest = { body: "" };
+let adsUnshareRequestURL = "";
+let adsDisconnectRequestURL = "";
 
 function json(response, value, status = 200) {
   response.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
@@ -56,8 +62,28 @@ const server = createServer(async (request, response) => {
   if (url.pathname === "/api/v1/admin/session") {
     if (request.method === "POST") authenticated = true;
     json(response, authenticated
-      ? { authenticated: true, username: "admin", csrf_token: "browser-csrf" }
-      : { authenticated: false, auth_enabled: true, login_enabled: true });
+      ? {
+        authenticated: true,
+        username: "admin",
+        csrf_token: "browser-csrf",
+        ...(oaMode ? { login_enabled: false, oa_login_enabled: true, auth_method: "oa" } : {}),
+      }
+      : oaMode
+        ? {
+          authenticated: false,
+          auth_enabled: true,
+          login_enabled: false,
+          oa_login_enabled: true,
+          oa_login_url: "/api/v1/admin/oa/login",
+        }
+        : { authenticated: false, auth_enabled: true, login_enabled: true });
+    return;
+  }
+  if (url.pathname === "/api/v1/admin/oa/login") {
+    oaLoginRequests += 1;
+    authenticated = true;
+    response.writeHead(303, { location: "/", "cache-control": "no-store" });
+    response.end();
     return;
   }
   if (url.pathname === "/api/v1/admin/dashboard") {
@@ -116,12 +142,77 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
+  if (url.pathname === "/api/v1/admin/providers/amazon-ads/accounts") {
+    json(response, {
+      items: [{
+        provider_key: "amazon-ads", account_id: "acct_ads_browser",
+        connection_id: "con_ads_browser", external_account_id: "9988776655",
+        display_name: "Browser Ads", status: "active", owner_issuer: "connected-account-browser",
+        owner_employee_id: "employee-browser", active_bindings_count: 2,
+        updated_at: "2026-07-30T00:00:00.000Z", region: "na", country_code: "US",
+        currency_code: "USD", account_type: "seller", marketplace_id: "ATVPDKIKX0DER",
+        bindings: [],
+      }],
+      total: 1,
+    });
+    return;
+  }
+  if (url.pathname === "/api/v1/admin/providers/amazon-ads/accounts/acct_ads_browser") {
+    json(response, {
+      provider_key: "amazon-ads", account_id: "acct_ads_browser",
+      connection_id: "con_ads_browser", external_account_id: "9988776655",
+      display_name: "Browser Ads", status: "active", owner_issuer: "connected-account-browser",
+      owner_employee_id: "employee-browser", active_bindings_count: 2,
+      updated_at: "2026-07-30T00:00:00.000Z", region: "na", country_code: "US",
+      currency_code: "USD", account_type: "seller", marketplace_id: "ATVPDKIKX0DER",
+      bindings: [
+        { connection_id: "con_ads_browser", issuer: "connected-account-browser", employee_id: "employee-browser", status: "active", remark: null, bound_at: "2026-07-30T00:00:00.000Z", updated_at: "2026-07-30T00:00:00.000Z", is_owner: true },
+        { connection_id: "con_ads_browser", issuer: "connected-account-browser", employee_id: "employee-shared", status: "active", remark: "Ads shared", bound_at: "2026-07-30T00:00:00.000Z", updated_at: "2026-07-30T00:00:00.000Z", is_owner: false },
+      ],
+    });
+    return;
+  }
+  if (url.pathname === "/api/v1/admin/providers/amazon-ads/employees") {
+    json(response, { items: [
+      { issuer: "connected-account-browser", employee_id: "employee-browser", first_seen_at: "2026-07-30T00:00:00.000Z", last_seen_at: "2026-07-30T00:00:00.000Z", active_bindings_count: 1, total_bindings_count: 1 },
+      { issuer: "connected-account-browser", employee_id: "employee-shared", first_seen_at: "2026-07-30T00:00:00.000Z", last_seen_at: "2026-07-30T00:00:00.000Z", active_bindings_count: 1, total_bindings_count: 1 },
+      { issuer: "connected-account-browser", employee_id: "employee-ads-new", first_seen_at: "2026-07-30T00:00:00.000Z", last_seen_at: "2026-07-30T00:00:00.000Z", active_bindings_count: 0, total_bindings_count: 0 },
+    ], total: 3 });
+    return;
+  }
+  if (
+    url.pathname === "/api/v1/admin/providers/amazon-ads/account-bindings"
+    && request.method === "POST"
+  ) {
+    adsShareRequest = { body: await requestBody(request) };
+    json(response, { shared: true }, 201);
+    return;
+  }
+  if (
+    url.pathname === "/api/v1/admin/providers/amazon-ads/account-bindings/con_ads_browser"
+    && request.method === "DELETE"
+  ) {
+    adsUnshareRequestURL = request.url || "";
+    response.writeHead(204, { "cache-control": "no-store" });
+    response.end();
+    return;
+  }
+  if (
+    url.pathname === "/api/v1/admin/providers/amazon-ads/connections/con_ads_browser"
+    && request.method === "DELETE"
+  ) {
+    adsDisconnectRequestURL = request.url || "";
+    response.writeHead(204, { "cache-control": "no-store" });
+    response.end();
+    return;
+  }
   if (url.pathname === "/api/v1/admin/accounts/acct_browser/refresh" && request.method === "POST") {
     refreshRequests += 1;
     json(response, { refreshed: true });
     return;
   }
   if (url.pathname === "/api/v1/admin/accounts/acct_browser") {
+    accountDetailRequests += 1;
     json(response, {
       account_id: "acct_browser", selling_partner_id_masked: "A1B*******SER",
       display_name: "Browser Seller", region: "NA", marketplaces: ["ATVPDKIKX0DER"],
@@ -328,6 +419,13 @@ async function viewport(width, height = 900) {
   await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(await evaluate("document.documentElement.scrollWidth <= window.innerWidth"), true, `${width}px body overflow`);
 }
+async function screenshot(name) {
+  const directory = process.env.ADMIN_BROWSER_SCREENSHOT_DIR;
+  if (!directory) return;
+  await mkdir(directory, { recursive: true });
+  const result = await command("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+  await writeFile(join(directory, `${name}.png`), Buffer.from(result.data, "base64"));
+}
 
 try {
   await command("Runtime.enable");
@@ -337,7 +435,7 @@ try {
     const set=(selector,value)=>{const input=document.querySelector(selector); const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set; setter.call(input,value); input.dispatchEvent(new Event('input',{bubbles:true}));};
     set('#admin-username','admin'); set('#admin-password','browser-password'); document.querySelector('form').requestSubmit();
   })()`);
-  await waitFor("document.body.innerText.includes('Seller 账号')", "authenticated shell");
+  await waitFor("document.body.innerText.includes('Amazon 连接')", "authenticated shell");
   await waitFor("document.body.innerText.includes('过去 24 小时有 2 项告警')", "dashboard alert status");
   assert.equal(
     await evaluate("document.body.innerText.includes('过去 24 小时存在 2 次 MCP 工具或凭据异常')"),
@@ -349,7 +447,7 @@ try {
   );
   const routes = [
     ["#/", "Seller 账号总数"],
-    ["#/accounts", "Amazon Seller 账号"],
+    ["#/accounts", "Amazon 连接"],
     ["#/accounts/acct_browser", "Browser Seller"],
     ["#/capabilities", "SP-API 能力"],
     ["#/amazon-setup", "Amazon / LWA 配置"],
@@ -393,6 +491,65 @@ try {
   );
   await waitFor("window.location.hash==='#/accounts/acct_browser'", "account detail route");
   await waitFor("document.body.innerText.includes('Browser Seller')", "account detail page");
+  await evaluate("window.location.hash='#/accounts'");
+  await waitFor(
+    "Array.from(document.querySelectorAll('button')).some((item)=>item.textContent.trim()==='Ads')",
+    "Ads provider tab",
+  );
+  await evaluate(
+    `Array.from(document.querySelectorAll('button')).find((item)=>item.textContent.trim()==='Ads').click()`,
+  );
+  await waitFor("document.body.innerText.includes('Browser Ads')", "Ads account list");
+  await viewport(320, 780);
+  await viewport(1440, 900);
+  await evaluate(
+    `Array.from(document.querySelectorAll('button')).find((item)=>item.textContent.trim()==='Ads 详情').click()`,
+  );
+  await waitFor("document.body.innerText.includes('9988776655')", "Ads account detail");
+  await viewport(1440, 900);
+  await screenshot("amazon-ads-detail-desktop");
+  await viewport(320, 780);
+  await screenshot("amazon-ads-detail-mobile");
+  await viewport(1440, 900);
+  await waitFor(
+    "Array.from(document.querySelectorAll('button')).some((item)=>item.textContent.trim()==='分享 Ads Binding' && !item.disabled)",
+    "Ads share binding",
+  );
+  await evaluate(
+    `Array.from(document.querySelectorAll('button')).find((item)=>item.textContent.trim()==='分享 Ads Binding').click()`,
+  );
+  for (let i = 0; i < 100 && !adsShareRequest.body; i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(JSON.parse(adsShareRequest.body), {
+    connection_id: "con_ads_browser",
+    issuer: "connected-account-browser",
+    employee_id: "employee-ads-new",
+  });
+  await waitFor(
+    "Array.from(document.querySelectorAll('button')).some((item)=>item.textContent.trim()==='移除 Binding' && !item.disabled)",
+    "Ads remove binding",
+  );
+  await evaluate(
+    `Array.from(document.querySelectorAll('button')).find((item)=>item.textContent.trim()==='移除 Binding').click()`,
+  );
+  for (let i = 0; i < 100 && !adsUnshareRequestURL; i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(
+    adsUnshareRequestURL,
+    "/api/v1/admin/providers/amazon-ads/account-bindings/con_ads_browser?issuer=connected-account-browser&employee_id=employee-shared",
+  );
+  await waitFor(
+    "Array.from(document.querySelectorAll('button')).some((item)=>item.textContent.trim()==='断开 Ads Grant' && !item.disabled)",
+    "Ads disconnect",
+  );
+  await evaluate(
+    `Array.from(document.querySelectorAll('button')).find((item)=>item.textContent.trim()==='断开 Ads Grant').click()`,
+  );
+  await waitFor("document.querySelector('dialog')?.open === true", "Ads disconnect confirmation");
+  await evaluate(`(() => { const input=document.querySelector('dialog input'); const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set; setter.call(input,'acct_ads_browser'); input.dispatchEvent(new Event('input',{bubbles:true})); })()`);
+  await evaluate(
+    `Array.from(document.querySelectorAll('dialog button')).find((item)=>item.textContent.trim()==='确认断开').click()`,
+  );
+  for (let i = 0; i < 100 && !adsDisconnectRequestURL; i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(adsDisconnectRequestURL, "/api/v1/admin/providers/amazon-ads/connections/con_ads_browser");
   await evaluate("window.location.hash='#/amazon-setup'");
   await waitFor(
     "Array.from(document.querySelectorAll('button')).some((item)=>item.textContent.includes('Seller 授权'))",
@@ -435,10 +592,12 @@ try {
   await evaluate(`Array.from(document.querySelectorAll('button')).find((item)=>item.textContent.trim()==='Refresh 状态').click()`);
   for (let i = 0; i < 100 && !refreshRequests; i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(refreshRequests, 1);
+  const accountDetailRequestsBeforeShare = accountDetailRequests;
   await waitFor(`(() => {
     const item = Array.from(document.querySelectorAll('button'))
       .find((button) => button.textContent.trim() === '分享 Binding');
     if (!item || item.disabled) return false;
+    window.__shareButtonBeforeRefresh = item;
     item.click();
     return true;
   })()`, "share binding button");
@@ -448,6 +607,15 @@ try {
     issuer: "connected-account-browser",
     connection_id: "con_browser",
   });
+  for (let i = 0; i < 100 && accountDetailRequests <= accountDetailRequestsBeforeShare; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.ok(accountDetailRequests > accountDetailRequestsBeforeShare, "sharing must refresh account details");
+  await waitFor(
+    "Array.from(document.querySelectorAll('button')).some((item)=>item.textContent.trim()==='分享 Binding' && item !== window.__shareButtonBeforeRefresh && !item.disabled)",
+    "completed share binding detail refresh",
+  );
+  await evaluate("delete window.__shareButtonBeforeRefresh");
   await waitFor(`(() => {
     const item = Array.from(document.querySelectorAll('button'))
       .find((button) => button.textContent.trim() === 'Disconnect Grant');
@@ -501,8 +669,28 @@ try {
   await waitFor("document.querySelector('dialog')?.open === false", "Escape closes dialog");
   assert.deepEqual(await evaluate("({local:localStorage.length,session:sessionStorage.length})"), { local: 0, session: 0 });
   assert.equal(await evaluate("/oat_[A-Za-z0-9_-]{32,}/.test(document.documentElement.innerHTML)"), false);
+
+  authenticated = false;
+  oaMode = true;
+  await command("Page.navigate", { url: origin });
+  await waitFor(
+    "Array.from(document.querySelectorAll('button')).some((item)=>item.textContent.trim()==='使用统一 OA 登录')",
+    "OA login button",
+  );
+  assert.equal(await evaluate("document.querySelector('#admin-password') === null"), true);
+  await viewport(320, 780);
+  await screenshot("amazon-admin-oa-login-mobile");
+  await viewport(1440, 900);
+  await screenshot("amazon-admin-oa-login-desktop");
+  await evaluate(
+    "Array.from(document.querySelectorAll('button')).find((item)=>item.textContent.trim()==='使用统一 OA 登录').click()",
+    true,
+  );
+  await waitFor("document.body.innerText.includes('Amazon 连接')", "OA authenticated shell");
+  assert.equal(oaLoginRequests, 1);
+  assert.deepEqual(await evaluate("({local:localStorage.length,session:sessionStorage.length})"), { local: 0, session: 0 });
   assert.equal(browserErrors.length, 0, browserErrors.join("\n"));
-  console.log("admin browser: login/router/320px/1440px/dialog/storage/secret checks passed");
+  console.log("admin browser: password+OA login/router/320px/1440px/dialog/storage/secret checks passed");
 } finally {
   socket.close();
   await stopBrowser();

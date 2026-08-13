@@ -8,7 +8,6 @@
 |---|---|---|---|
 | `amazon_connected-account_mcp_auth_failures_total` | counter | error_code | mcp |
 | `amazon_connected-account_mcp_scope_failures_total` | counter | error_code, actor_type | mcp |
-| `amazon_connected-account_mcp_rate_limited_total` | counter | actor_type, error_code | mcp |
 | `amazon_connected-account_mcp_protocol_failures_total` | counter | error_code, actor_type | mcp |
 | `amazon_connected-account_mcp_tool_results_total` | counter | tool, result, actor_type | mcp |
 | `amazon_connected-account_mcp_tool_duration_seconds` | histogram | tool, result, actor_type | mcp |
@@ -35,7 +34,7 @@ Queue/Worker 指标：**不适用**（当前无异步队列；引入队列前禁
 | RefreshRotationConflict | `rate(amazon_connected-account_lwa_refresh_rotation_total{error_code="conflict"}[5m]) > 0` | 10m | warning | 检查同 Credential revision 的并发 refresh 和 Redis coordination |
 | RedisLockTimeout | `rate(amazon_connected-account_redis_lwa_lock_total{error_code="timeout"}[5m]) > 0` | 5m | critical | 检查 Redis 延迟、lock TTL 和 LWA exchange 时长 |
 | RedisLockWaitP95 | `histogram_quantile(0.95, sum by (le) (rate(amazon_connected-account_redis_lwa_lock_wait_seconds_bucket[5m]))) > 1` | 15m | warning | 检查 refresh 惊群，不提高 TTL 掩盖慢请求 |
-| SpApi429 | `rate(amazon_connected-account_sp_api_errors_total{error_code="rate_limited"}[5m]) > 0.5` | 15m | warning | 降采样、检查 autoPage、限流 |
+| SpApi429 | `rate(amazon_connected-account_sp_api_errors_total{error_code="rate_limited"}[5m]) > 0.5` | 15m | warning | 降低 ConnectedAccount 调用频率并检查 autoPage 与 Amazon 配额；Provider 不做本地限流 |
 | ReadinessDown | `amazon_connected-account_readiness == 0` | 5m | critical | 检查 PostgreSQL/Redis/LWA/Token Store/加密密钥 |
 | ToolErrorSpike | `sum(rate(amazon_connected-account_mcp_tool_results_total{result="error"}[5m])) > 1` | 15m | warning | 按 tool label 分流 |
 
@@ -49,7 +48,7 @@ Annotation 只允许：runbook 链接、服务名、稳定 error_code。禁止 i
 - `mcp.tool.failed`：包含 `tool`、`actor_type`、哈希后的 `actor_id_hash`、`result=error` 与稳定 `error_code`；
 - PostgreSQL `amazon_sp_api.audit_log`：`action=mcp.tool.failed`、`resource_type=mcp_tool`、`result=failed`，并保存同一 `request_id`。
 
-管理 Dashboard 的“最近错误 / 告警”统计过去 24 小时所有 `audit_log.result='failed'` 记录。有告警时从 Dashboard 进入“审计日志”，按 Request ID 精确查询；也可直接筛选结果为 `failed`。原始 Employee ID、Seller ID、Token 和工具输入不得写入日志或告警。
+管理 Dashboard 的“最近错误 / 告警”统计过去 24 小时所有 `audit_log.result='failed'` 记录。有告警时从 Dashboard 进入“审计日志”，按 Request ID 精确查询；也可直接筛选结果为 `failed`。原始 Employee ID、Seller ID、Token 和工具输入不得写入普通 stdout、PostgreSQL 审计或告警；唯一例外是完整 `tools/call` arguments 独立写入受限 JSONL，并在 168 小时后删除。
 
 若 PostgreSQL 告警写入失败，工具仍返回原始 MCP 错误，同时 stdout 记录 `mcp.alert.persist_failed`。这表示持久化告警链路本身异常，应按同一 `request_id` 立即检查 PostgreSQL；不得将该事件视为业务工具的第二个错误。
 
@@ -67,7 +66,9 @@ docker compose logs --since 24h amazon-sp-api \
 
 ## Docker 日志保留边界
 
-Compose 使用 Docker `json-file` 驱动，每个日志文件最大 `10m`，最多保留 `5` 个文件。stdout 只用于近期关联排障，轮转或容器重建后不作为历史告警依据；跨容器的失败告警以 PostgreSQL `audit_log` 为准。部署后确认实际配置：
+Compose 使用 Docker `json-file` 驱动，每个日志文件最大 `10m`，最多保留 `5` 个文件。stdout 只用于近期关联排障，轮转或容器重建后不作为历史告警依据；跨容器的失败告警以 PostgreSQL `audit_log` 为准。完整 `tools/call` arguments 使用独立受限 JSONL 保留 168 小时，不进入 stdout 或 PostgreSQL，也不改变 Docker `10m` × `5` 的轮转配置。部署后确认实际配置：
+
+参数文件位于 `${storage.dataDirectory}/logs/mcp-arguments/mcp-arguments-YYYY-MM-DDTHH.jsonl`，按 UTC 小时切换，目录权限为 `0700`、文件权限为 `0600`。服务启动时及之后每小时清理创建时间超过 168 小时的匹配文件；目录内其他文件保持不变。
 
 ```bash
 docker inspect amazon-sp-api \

@@ -51,8 +51,8 @@
 - Orders v2026 拒绝 `BUYER`、`RECIPIENT`、`PACKAGES`、`PAYMENT` 数据段。响应先按冻结官方 schema 删除未知字段，再按 operation 安全规则删除 PII 和预签名 URL。
 - Data Kiosk 只允许冻结的 Seller schema；拒绝 mutation、subscription、introspection、未知 schema、超过 8,000 字符、12 层深度或 200 字段的 GraphQL。
 - Reports、Data Kiosk 和允许的文本 Feed 文档无状态分页：每页不超过 200 条或 256 KiB，游标 15 分钟过期，不落盘、不记录正文、不返回 Amazon 预签名 URL。游标使用从 credential keyring 派生的独立 AES-GCM 密钥，绑定员工、账号、operation、document、偏移和过期时间。
-- 每租户限制固定为 120 请求/分钟、8 并发；连接缓存 30 秒，区域缓存 24 小时。SP-API 客户端按 operation 和 Amazon usage-plan Header 自适应限流。
-- GET 与明确幂等查询可重试；创建 Report/Data Kiosk 任务遇到结果不确定的失败时不自动重放。
+- Provider 不对 MCP 入口实施请求/并发限流，也不根据 Amazon usage-plan Header 本地排队；连接缓存 30 秒，区域缓存 24 小时。
+- Amazon 返回 429 时映射为 `rate_limited`。GET 与明确幂等查询可按有界退避重试；创建 Report/Data Kiosk 任务遇到结果不确定的失败时不自动重放。
 
 ## 官方模型同步流程
 

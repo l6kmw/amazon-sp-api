@@ -108,7 +108,7 @@ function LogoIcon() {
 
 const navItems: Array<{ id: PageID; label: string }> = [
   { id: 'dashboard', label: '首页' },
-  { id: 'accounts', label: 'Seller 账号' },
+  { id: 'accounts', label: 'Amazon 连接' },
   { id: 'capabilities', label: 'SP-API 能力' },
   { id: 'amazon-setup', label: 'Amazon 配置' },
   { id: 'mcp-config', label: 'MCP 配置' },
@@ -139,7 +139,7 @@ export function AppShell({
                 <LogoIcon />
               </LogoMark>
               <BrandText>
-                <strong>Amazon SP-API</strong>
+                <strong>Amazon API</strong>
                 <span>管理控制台</span>
               </BrandText>
             </Brand>

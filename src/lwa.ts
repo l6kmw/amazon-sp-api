@@ -1,4 +1,5 @@
 import { AmazonMcpError } from "./errors.js";
+import { waitForAbortable } from "./abort.js";
 import type { RefreshTokenCredential, RefreshTokenProvider } from "./token-store.js";
 import { NULL_LOGGER, type StructuredLogger } from "./logger.js";
 import { mcpMetrics } from "./metrics.js";
@@ -73,17 +74,25 @@ export class LwaAccessTokenProvider {
     sellingPartnerId: string,
     tenantId: string,
     forceRefresh = false,
+    signal?: AbortSignal,
   ): Promise<string> {
+    signal?.throwIfAborted();
     if (!tenantId) {
       throw new AmazonMcpError("TENANT_REQUIRED", "tenant identity is required");
     }
-    const credential = await this.#credential(sellingPartnerId, tenantId);
+    const credential = await waitForAbortable(
+      this.#credential(sellingPartnerId, tenantId),
+      signal,
+    );
     const key = cacheKey(credential, sellingPartnerId, tenantId);
-    if (forceRefresh) await this.#invalidateKey(key);
+    if (forceRefresh) {
+      signal?.throwIfAborted();
+      await waitForAbortable(this.#invalidateKey(key), signal);
+    }
     const cached = this.#coordinator ? undefined : this.#cache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.accessToken;
     if (this.#coordinator && !forceRefresh) {
-      const shared = await this.#coordinator.get(key);
+      const shared = await waitForAbortable(this.#coordinator.get(key), signal);
       if (shared) {
         this.#cache.set(key, shared);
         return shared.accessToken;
@@ -91,7 +100,7 @@ export class LwaAccessTokenProvider {
     }
 
     const activeExchange = this.#inFlight.get(key);
-    if (activeExchange) return activeExchange;
+    if (activeExchange) return waitForAbortable(activeExchange, signal);
 
     const generation = this.#generations.get(key) ?? 0;
     const exchange = this.#getOrExchangeAccessToken(
@@ -103,12 +112,8 @@ export class LwaAccessTokenProvider {
       undefined,
       credential,
     );
-    this.#inFlight.set(key, exchange);
-    try {
-      return await exchange;
-    } finally {
-      if (this.#inFlight.get(key) === exchange) this.#inFlight.delete(key);
-    }
+    this.#trackExchange(key, exchange);
+    return waitForAbortable(exchange, signal);
   }
 
   /**
@@ -120,11 +125,16 @@ export class LwaAccessTokenProvider {
     sellingPartnerId: string,
     tenantId: string,
     rejectedAccessToken: string,
+    signal?: AbortSignal,
   ): Promise<string> {
+    signal?.throwIfAborted();
     if (!tenantId) {
       throw new AmazonMcpError("TENANT_REQUIRED", "tenant identity is required");
     }
-    const credential = await this.#credential(sellingPartnerId, tenantId);
+    const credential = await waitForAbortable(
+      this.#credential(sellingPartnerId, tenantId),
+      signal,
+    );
     const key = cacheKey(credential, sellingPartnerId, tenantId);
     const local = this.#cache.get(key);
     if (
@@ -135,7 +145,7 @@ export class LwaAccessTokenProvider {
       return local.accessToken;
     }
     if (this.#coordinator) {
-      const shared = await this.#coordinator.get(key);
+      const shared = await waitForAbortable(this.#coordinator.get(key), signal);
       if (shared && shared.accessToken !== rejectedAccessToken) {
         this.#cache.set(key, shared);
         return shared.accessToken;
@@ -144,12 +154,18 @@ export class LwaAccessTokenProvider {
 
     const activeExchange = this.#inFlight.get(key);
     if (activeExchange) {
-      const token = await activeExchange;
+      const token = await waitForAbortable(activeExchange, signal);
       if (token !== rejectedAccessToken) return token;
     }
 
     // Drop the rejected token from local/shared caches before a recovery exchange.
-    await this.#invalidateKey(key);
+    signal?.throwIfAborted();
+    await waitForAbortable(this.#invalidateKey(key), signal);
+    const replacementExchange = this.#inFlight.get(key);
+    if (replacementExchange) {
+      const token = await waitForAbortable(replacementExchange, signal);
+      if (token !== rejectedAccessToken) return token;
+    }
     const generation = this.#generations.get(key) ?? 0;
     const exchange = this.#getOrExchangeAccessToken(
       key,
@@ -160,12 +176,16 @@ export class LwaAccessTokenProvider {
       rejectedAccessToken,
       credential,
     );
+    this.#trackExchange(key, exchange);
+    return waitForAbortable(exchange, signal);
+  }
+
+  #trackExchange(key: string, exchange: Promise<string>): void {
     this.#inFlight.set(key, exchange);
-    try {
-      return await exchange;
-    } finally {
+    const cleanup = () => {
       if (this.#inFlight.get(key) === exchange) this.#inFlight.delete(key);
-    }
+    };
+    void exchange.then(cleanup, cleanup);
   }
 
   async #getOrExchangeAccessToken(

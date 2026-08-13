@@ -8,7 +8,13 @@ import {
   SP_API_MODEL_SCHEMAS,
   SP_API_OPERATIONS,
 } from "./generated/sp-api-registry.js";
-import { SpApiError, type AmazonRegion, type SpApiReader } from "./sp-api-client.js";
+import {
+  SpApiError,
+  supportsFbaInventory,
+  supportsListingsItems,
+  type AmazonRegion,
+  type SpApiReader,
+} from "./sp-api-client.js";
 
 export const SP_API_DOMAINS = [
   "seller", "catalog", "listings", "orders", "inventory", "pricing",
@@ -106,6 +112,14 @@ const NOTIFICATION_TYPES = new Set([
   "REPORT_PROCESSING_FINISHED",
   "TRANSACTION_UPDATE",
 ]);
+const ORDER_NON_PII_SEGMENTS = [
+  "PROCEEDS",
+  "EXPENSE",
+  "PROMOTION",
+  "CANCELLATION",
+  "FULFILLMENT",
+  "FULFILLMENT_ORDERS",
+] as const;
 const ORDER_PII_SEGMENTS = new Set(["BUYER", "RECIPIENT", "PACKAGES", "PAYMENT", "TAX"]);
 const DOCUMENT_OPERATIONS = new Set(["getReportDocument", "getDocument", "getFeedDocument"]);
 
@@ -199,6 +213,36 @@ function parameterShape(parameters: readonly OperationParameter[], modelId: stri
     }));
 }
 
+function ordersParameterShape(
+  operations: readonly SpApiReadOperation[],
+  location: "path" | "query",
+) {
+  return Object.fromEntries(operations.flatMap((operation) => {
+    const definitions = definitionsFor(operation.modelId);
+    return operation.parameters[location]
+      .filter((parameter) => !ACCOUNT_BOUND_PARAMETERS.has(parameter.name))
+      .map((parameter) => {
+        const validator = location === "query" && parameter.name === "includedData"
+          ? z.array(z.enum(ORDER_NON_PII_SEGMENTS)).max(100)
+          : schemaToZod(parameter.schema, definitions);
+        return [parameter.name, validator.optional()] as const;
+      });
+  }));
+}
+
+function ordersDomainInputSchema(operations: readonly SpApiReadOperation[]): ZodTypeAny {
+  const actions = operations.map((operation) => operation.action) as [string, ...string[]];
+  return z.object({
+    action: z.enum(actions),
+    account_id: z.string().regex(/^acct_[A-Za-z0-9_-]{16,128}$/),
+    region: z.enum(["na", "eu", "fe"]),
+    path: z.object(ordersParameterShape(operations, "path")).strict().optional()
+      .describe("Path parameters for the selected Orders action."),
+    query: z.object(ordersParameterShape(operations, "query")).strict().optional()
+      .describe("GET query filters for the selected Orders action; omit body."),
+  }).strict();
+}
+
 function operationVariant(operation: SpApiReadOperation) {
   if (isDocumentReadOperation(operation)) {
     return z.object({
@@ -224,7 +268,8 @@ function operationVariant(operation: SpApiReadOperation) {
 }
 
 export function domainInputSchema(domain: SpApiDomain): ZodTypeAny {
-  const actions = READ_OPERATIONS.filter((operation) => operation.domain === domain).map((operation) => operation.action);
+  const operations = READ_OPERATIONS.filter((operation) => operation.domain === domain);
+  const actions = operations.map((operation) => operation.action);
   if (actions.length === 0) {
     return z.object({
       action: z.never(),
@@ -232,6 +277,7 @@ export function domainInputSchema(domain: SpApiDomain): ZodTypeAny {
       region: z.enum(["na", "eu", "fe"]),
     }).strict();
   }
+  if (domain === "orders") return ordersDomainInputSchema(operations);
   return z.object({
     action: z.enum(actions as [string, ...string[]]),
     account_id: z.string().regex(/^acct_[A-Za-z0-9_-]{16,128}$/),
@@ -245,7 +291,14 @@ export function domainInputSchema(domain: SpApiDomain): ZodTypeAny {
 }
 
 export function validateOperationInput(operation: SpApiReadOperation, input: unknown): void {
-  const parsed = operationVariant(operation).parse(input) as { region: AmazonRegion };
+  const result = operationVariant(operation).safeParse(input);
+  if (!result.success) {
+    throw new AmazonMcpError(
+      "INVALID_FILTER",
+      `arguments do not match the frozen schema for ${operation.action}`,
+    );
+  }
+  const parsed = result.data as { region: AmazonRegion };
   if (!operation.regions.includes(parsed.region)) {
     throw new AmazonMcpError("REGION_MISMATCH", "operation is not available in the selected Amazon region");
   }
@@ -358,6 +411,27 @@ export function validateOperationPolicy(operation: SpApiReadOperation, input: {
   query?: Record<string, unknown>;
   body?: unknown;
 }): void {
+  if (operation.operationId === "getInventorySummaries") {
+    const marketplaceIds = [input.query?.granularityId, ...values(input.query?.marketplaceIds)];
+    if (marketplaceIds.some((item) => typeof item !== "string" || !supportsFbaInventory(item))) {
+      throw new AmazonMcpError(
+        "INVALID_FILTER",
+        "marketplace is not supported by FBA Inventory",
+      );
+    }
+  }
+  if (operation.domain === "listings") {
+    const marketplaceIds = values(input.query?.marketplaceIds);
+    if (
+      marketplaceIds.length === 0 ||
+      marketplaceIds.some((item) => typeof item !== "string" || !supportsListingsItems(item))
+    ) {
+      throw new AmazonMcpError(
+        "INVALID_FILTER",
+        "marketplace is not supported by Listings APIs",
+      );
+    }
+  }
   if (operation.domain === "orders") {
     const included = input.query?.includedData;
     for (const item of values(included)) {

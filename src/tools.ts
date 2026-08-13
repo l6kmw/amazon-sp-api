@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
+import { abortAfter, waitForAbortable } from "./abort.js";
 import { AmazonMcpError, normalizeToolErrorMessage } from "./errors.js";
 import type { AccountAccessPolicy } from "./account-access-policy.js";
 import { mcpMetrics } from "./metrics.js";
@@ -22,11 +23,15 @@ import {
 } from "./safe-output.js";
 import {
   SpApiError,
+  SpApiRequestBudgetExceededError,
   regionForMarketplace,
   regionForMarketplaces,
+  supportsFbaInventory,
+  supportsListingsItems,
   type AmazonRegion,
   type SpApiReader,
 } from "./sp-api-client.js";
+import { NULL_LOGGER, type StructuredLogger } from "./logger.js";
 import {
   READ_OPERATIONS,
   SP_API_DOMAINS,
@@ -63,10 +68,12 @@ import {
 export interface AmazonMcpServerOptions {
   principal?: AmazonPrincipal;
   regionCache?: AmazonSellerRegionCache;
-  chargeSpApiCall?: (tenantId: string) => void;
   capabilityTracker?: SpApiCapabilityTracker;
   documentReader?: Pick<AmazonDocumentReader, "readPage">;
   accountAccessPolicy?: AccountAccessPolicy;
+  logger?: StructuredLogger;
+  now?: () => number;
+  searchOrdersBudgetMs?: number;
 }
 
 export interface AmazonSellerRegionCache {
@@ -116,10 +123,14 @@ export class InMemoryAmazonSellerRegionCache implements AmazonSellerRegionCache 
 
 const accountId = z.string().regex(/^acct_[A-Za-z0-9_-]{16,128}$/);
 const marketplaceId = z.string().regex(/^[A-Z0-9]{10,20}$/);
+const fbaInventoryMarketplaceId = marketplaceId.refine(supportsFbaInventory, {
+  message: "marketplaceId is not supported by FBA Inventory",
+});
 const orderId = z.string().regex(/^[A-Za-z0-9-]{1,64}$/);
 const timestamp = z.string().datetime({ offset: true });
 const amazonRegion = z.enum(["na", "eu", "fe"]);
 const REGION_PROBE_ORDER: AmazonRegion[] = ["na", "eu", "fe"];
+export const SEARCH_ORDERS_BUDGET_MS = 50_000;
 const SERVER_INSTRUCTIONS = [
   "先调用 amazon_get_identity 和 amazon_list_accounts；账号授权、续期和断开均通过 /connected-account/v1 Connected Account 接口管理。",
   "所有 Amazon 业务工具必须使用 amazon_list_accounts 返回的 account_id，不能直接传 Selling Partner ID。",
@@ -198,23 +209,57 @@ function participatingMarketplaceIds(response: MarketplaceParticipations): strin
 async function readPages(options: {
   autoPage: boolean;
   initialToken?: string;
-  read: (nextToken?: string) => Promise<unknown>;
-}): Promise<{ pages: Record<string, unknown>[]; nextToken?: string }> {
+  deadlineAt?: number;
+  signal?: AbortSignal;
+  now?: () => number;
+  read: (nextToken?: string, deadlineAt?: number) => Promise<unknown>;
+}): Promise<{ pages: Record<string, unknown>[]; nextToken?: string; budgetExhausted: boolean }> {
   const pages: Record<string, unknown>[] = [];
   const requestedTokens = new Set<string>();
   let nextToken = options.initialToken;
+  let budgetExhausted = false;
   for (let page = 0; page < (options.autoPage ? 5 : 1); page += 1) {
+    options.signal?.throwIfAborted();
+    if (options.deadlineAt !== undefined && (options.now ?? Date.now)() >= options.deadlineAt) {
+      if (pages.length === 0) throw new SpApiRequestBudgetExceededError();
+      budgetExhausted = true;
+      break;
+    }
     if (nextToken) requestedTokens.add(nextToken);
-    const response = record(await options.read(nextToken)) ?? {};
+    let result: unknown;
+    try {
+      result = await options.read(nextToken, options.deadlineAt);
+    } catch (error) {
+      if (
+        error instanceof SpApiRequestBudgetExceededError &&
+        !options.signal?.aborted &&
+        pages.length > 0
+      ) {
+        budgetExhausted = true;
+        break;
+      }
+      if (
+        error instanceof SpApiRequestBudgetExceededError &&
+        options.signal?.aborted
+      ) {
+        options.signal.throwIfAborted();
+      }
+      throw error;
+    }
+    const response = record(result) ?? {};
     pages.push(response);
     const token = record(response.pagination)?.nextToken;
     nextToken = typeof token === "string" && token ? token : undefined;
-    if (!nextToken || requestedTokens.has(nextToken)) {
-      nextToken = undefined;
-      break;
+    if (!nextToken) break;
+    if (requestedTokens.has(nextToken)) {
+      throw new AmazonMcpError(
+        "UPSTREAM_SP_API",
+        "Amazon SP-API returned a repeated pagination token",
+        false,
+      );
     }
   }
-  return { pages, nextToken };
+  return { pages, nextToken, budgetExhausted };
 }
 
 async function discoverMarketplaceRegion(options: {
@@ -276,8 +321,11 @@ function snapshotSummary(options: {
   lookbackDays: number;
   ordersSampled: number;
   includeInventory: boolean;
+  inventoryCheckedMarketplaceCount: number;
+  analyzedMarketplaceCount: number;
   inventorySummaryCount: number;
   includeListings: boolean;
+  listingsCheckedMarketplaceCount: number;
   listingSampleCount: number;
   buyableListingSampleCount: number;
   listingIssueSampleCount: number;
@@ -288,17 +336,21 @@ function snapshotSummary(options: {
     : `抽样中发现 ${options.ordersSampled} 条订单记录`;
   const inventory = !options.includeInventory
     ? "未检查 FBA 库存"
-    : options.inventorySummaryCount === 0
-      ? "FBA 库存汇总为空"
-      : `本次返回 ${options.inventorySummaryCount} 条 FBA 库存汇总`;
+    : options.inventoryCheckedMarketplaceCount === 0
+      ? `0/${options.analyzedMarketplaceCount} 个已分析站点支持 FBA 库存查询，本次未发起库存请求`
+      : options.inventorySummaryCount === 0
+        ? `已检查 ${options.inventoryCheckedMarketplaceCount}/${options.analyzedMarketplaceCount} 个站点的 FBA 库存，库存汇总为空`
+        : `已检查 ${options.inventoryCheckedMarketplaceCount}/${options.analyzedMarketplaceCount} 个站点的 FBA 库存，本次返回 ${options.inventorySummaryCount} 条库存汇总`;
   const inventoryGuidance = options.includeInventory
     ? "如需库存明细，请调用 amazon_list_inventory_summaries。"
     : "如需库存状态，请重新调用 amazon_business_snapshot 并设置 includeInventory=true。";
   const listings = !options.includeListings
     ? "未检查 Listings"
-    : options.listingSampleCount === 0
-      ? "Listing 抽样为空"
-      : `Listing 抽样发现 ${options.listingSampleCount} 个刊登，其中 ${options.buyableListingSampleCount} 个可购买，${options.listingIssueSampleCount} 个含问题代码`;
+    : options.listingsCheckedMarketplaceCount === 0
+      ? `0/${options.analyzedMarketplaceCount} 个已分析站点支持 Listings Items，本次未发起 Listings 请求`
+      : options.listingSampleCount === 0
+        ? `已检查 ${options.listingsCheckedMarketplaceCount}/${options.analyzedMarketplaceCount} 个站点的 Listings，Listing 抽样为空`
+        : `已检查 ${options.listingsCheckedMarketplaceCount}/${options.analyzedMarketplaceCount} 个站点的 Listings，抽样发现 ${options.listingSampleCount} 个刊登，其中 ${options.buyableListingSampleCount} 个可购买，${options.listingIssueSampleCount} 个含问题代码`;
   const listingGuidance = options.includeListings
     ? "如需 Listing 明细，请调用 amazon_search_listings。"
     : "";
@@ -363,6 +415,12 @@ export function createAmazonMcpServer(
   client: SpApiReader,
   options: AmazonMcpServerOptions = {},
 ): McpServer {
+  const now = options.now ?? Date.now;
+  const logger = options.logger ?? NULL_LOGGER;
+  const searchOrdersBudgetMs = options.searchOrdersBudgetMs ?? SEARCH_ORDERS_BUDGET_MS;
+  if (!Number.isFinite(searchOrdersBudgetMs) || searchOrdersBudgetMs <= 0) {
+    throw new Error("search orders budget must be positive");
+  }
   const withAccount = <T extends z.ZodRawShape>(fields: T) => z.object({
     account_id: accountId,
     ...fields,
@@ -385,21 +443,7 @@ export function createAmazonMcpServer(
     // Failures must never include success-shaped structuredContent.
   });
 
-  const readSpApi: SpApiReader["get"] = (request) => {
-    options.chargeSpApiCall?.(request.tenantId);
-    return client.get(request);
-  };
-  const meteredClient: SpApiReader = {
-    get: readSpApi,
-    ...(client.request
-      ? {
-        request: (request) => {
-          options.chargeSpApiCall?.(request.tenantId);
-          return client.request!(request);
-        },
-      }
-      : {}),
-  };
+  const readSpApi: SpApiReader["get"] = (request) => client.get(request);
 
   server.registerTool(
     "amazon_get_identity",
@@ -450,17 +494,22 @@ export function createAmazonMcpServer(
     },
   );
 
-  const resolveAccountInput = async (input: unknown) => {
+  const resolveAccountInput = async (input: unknown, signal?: AbortSignal) => {
     const values = record(input);
     if (!options.principal || !options.accountAccessPolicy || typeof values?.account_id !== "string") {
       throw new AmazonMcpError("NOT_CONNECTED", "Amazon account is not available");
     }
     try {
-      return await options.accountAccessPolicy.resolveAccount(
-        options.principal,
-        values.account_id,
+      return await waitForAbortable(
+        options.accountAccessPolicy.resolveAccount(
+          options.principal,
+          values.account_id,
+          signal,
+        ),
+        signal,
       );
     } catch (error) {
+      if (signal?.aborted || error instanceof SpApiRequestBudgetExceededError) throw error;
       mcpMetrics.inc("account_access_rejections_total", "Account policy access rejections", {
         actor_type: options.principal.authType === "connected-account" ? "connected-account" : "test_agent",
         error_code: error instanceof ConnectedAccountAccountError && error.status === 404
@@ -510,11 +559,14 @@ export function createAmazonMcpServer(
   );
 
   for (const domain of SP_API_DOMAINS) {
+    const domainDescription = domain === "orders"
+      ? `Run one frozen, allowlisted ${DOMAIN_TITLES[domain]} Seller read action. Put searchOrders filters in query and omit body; autoPage is supported only by amazon_search_orders. Arbitrary methods, paths, URLs, headers and restricted operations are not accepted.`
+      : `Run one frozen, allowlisted ${DOMAIN_TITLES[domain]} Seller read action. Arbitrary methods, paths, URLs, headers and restricted operations are not accepted.`;
     server.registerTool(
       `amazon_${domain}_read`,
       {
         title: `${DOMAIN_TITLES[domain]} read operations`,
-        description: `Run one frozen, allowlisted ${DOMAIN_TITLES[domain]} Seller read action. Arbitrary methods, paths, URLs, headers and restricted operations are not accepted.`,
+        description: domainDescription,
         inputSchema: domainInputSchema(domain),
         outputSchema: genericReadOutputSchema,
         annotations: toolAnnotations.externalRead,
@@ -559,7 +611,7 @@ export function createAmazonMcpServer(
           }
         } else {
           data = await executeReadOperation({
-            client: meteredClient,
+            client,
             operation,
             tenantId: currentTenantId,
             accountId: values.account_id,
@@ -602,7 +654,7 @@ export function createAmazonMcpServer(
       let result: { region: AmazonRegion; response: MarketplaceParticipations };
       try {
         result = await discoverMarketplaceRegion({
-          client: meteredClient,
+          client,
           sellingPartnerId: seller,
           tenantId: currentTenantId,
           region: (region || cachedRegion) as AmazonRegion | undefined,
@@ -652,7 +704,10 @@ export function createAmazonMcpServer(
       const seller = access.account.externalAccountId;
       const currentTenantId = access.credentialOwnerId;
       const participationByRegion = new Map<AmazonRegion, MarketplaceParticipations>();
-      for (const region of REGION_PROBE_ORDER) {
+      const participationRegions = marketplaceIds
+        ? [...new Set(marketplaceIds.map(regionForMarketplace))]
+        : REGION_PROBE_ORDER;
+      for (const region of participationRegions) {
         try {
           const response = await readSpApi({
             sellingPartnerId: seller,
@@ -662,7 +717,7 @@ export function createAmazonMcpServer(
           }) as MarketplaceParticipations;
           participationByRegion.set(region, response);
         } catch (error) {
-          if (error instanceof SpApiError && error.status === 403) continue;
+          if (!marketplaceIds && error instanceof SpApiError && error.status === 403) continue;
           throw error;
         }
       }
@@ -709,8 +764,11 @@ export function createAmazonMcpServer(
 
       let inventorySummaryCount = 0;
       let marketplacesWithInventory = 0;
+      const inventoryMarketplaceIds = includeInventory
+        ? selectedIds.filter(supportsFbaInventory)
+        : [];
       if (includeInventory) {
-        for (const id of selectedIds) {
+        for (const id of inventoryMarketplaceIds) {
           const response = record(await readSpApi({
             sellingPartnerId: seller,
             tenantId: currentTenantId,
@@ -737,8 +795,11 @@ export function createAmazonMcpServer(
         issueSampleCount: number;
         hasMore: boolean;
       }> = [];
+      const listingMarketplaceIds = includeListings
+        ? selectedIds.filter(supportsListingsItems)
+        : [];
       if (includeListings) {
-        for (const id of selectedIds) {
+        for (const id of listingMarketplaceIds) {
           const response = record(await readSpApi({
             sellingPartnerId: seller,
             tenantId: currentTenantId,
@@ -792,8 +853,11 @@ export function createAmazonMcpServer(
           lookbackDays,
           ordersSampled: firstPageCount,
           includeInventory,
+          inventoryCheckedMarketplaceCount: inventoryMarketplaceIds.length,
+          analyzedMarketplaceCount: selectedIds.length,
           inventorySummaryCount,
           includeListings,
+          listingsCheckedMarketplaceCount: listingMarketplaceIds.length,
           listingSampleCount,
           buyableListingSampleCount,
           listingIssueSampleCount,
@@ -819,14 +883,14 @@ export function createAmazonMcpServer(
         },
         inventory: {
           included: includeInventory,
-          checkedMarketplaceCount: includeInventory ? selectedIds.length : 0,
+          checkedMarketplaceCount: inventoryMarketplaceIds.length,
           marketplacesWithInventory,
           summaryCount: inventorySummaryCount,
-          isEmpty: includeInventory ? inventorySummaryCount === 0 : null,
+          isEmpty: inventoryMarketplaceIds.length > 0 ? inventorySummaryCount === 0 : null,
         },
         listings: {
           included: includeListings,
-          checkedMarketplaceCount: includeListings ? selectedIds.length : 0,
+          checkedMarketplaceCount: listingMarketplaceIds.length,
           sampleListingCount: listingSampleCount,
           marketplacesWithListings: listingCountsByMarketplace.filter(
             (item) => item.sampleListingCount > 0,
@@ -835,11 +899,13 @@ export function createAmazonMcpServer(
           issueSampleCount: listingIssueSampleCount,
           hasMore: listingCountsByMarketplace.some((item) => item.hasMore),
           countsByMarketplace: listingCountsByMarketplace,
-          paginationHint: includeListings
-            ? "Only the first 20 Listings per marketplace were sampled; use amazon_search_listings for details and pagination."
-            : "Listings were not requested; set includeListings=true after enabling the Listings feature flag.",
+          paginationHint: !includeListings
+            ? "Listings were not requested; set includeListings=true after enabling the Listings feature flag."
+            : listingMarketplaceIds.length === 0
+              ? "No selected marketplace supports Listings Items; no Listings request was made."
+              : "Only the first 20 Listings per marketplace were sampled; use amazon_search_listings for details and pagination.",
         },
-        dataBoundary: `Read-only operational summary. No buyer or recipient datasets are requested, and no buyer, recipient, address, payment, tracking, or other PII is returned; order totals are sampled, not exact. Listings are ${includeListings ? "sampled from allowlisted summary and issue-code fields only; totals are not exact" : "not included"}.`,
+        dataBoundary: `Read-only operational summary. No buyer or recipient datasets are requested, and no buyer, recipient, address, payment, tracking, or other PII is returned; order totals are sampled, not exact. Listings are ${!includeListings ? "not included" : listingMarketplaceIds.length === 0 ? "not queried because the selected marketplaces are unsupported" : "sampled from allowlisted summary and issue-code fields only; totals are not exact"}.`,
       });
     },
   );
@@ -853,54 +919,79 @@ export function createAmazonMcpServer(
       outputSchema: searchOrdersOutputSchema,
       annotations: toolAnnotations.externalRead,
     },
-    async (input) => {
-      const {
-        marketplaceIds,
-        paginationToken,
-        autoPage,
-        createdAfter,
-        createdBefore,
-        lastUpdatedAfter,
-        lastUpdatedBefore,
-        fulfillmentStatuses,
-        fulfilledBy,
-        maxResultsPerPage,
-      } = input;
-      const filters = {
-        createdAfter,
-        createdBefore,
-        lastUpdatedAfter,
-        lastUpdatedBefore,
-        fulfillmentStatuses,
-        fulfilledBy,
-        maxResultsPerPage,
-      };
-      validateSearchOrderFilters(filters);
-      const access = await resolveAccountInput(input);
-      const seller = access.account.externalAccountId;
-      const currentTenantId = access.credentialOwnerId;
-      const region = regionForMarketplaces(marketplaceIds);
-      const { pages, nextToken } = await readPages({
-        autoPage,
-        initialToken: paginationToken,
-        read: (token) => readSpApi({
-          sellingPartnerId: seller,
-          tenantId: currentTenantId,
-          region,
-          path: "/orders/2026-01-01/orders",
-          query: { marketplaceIds, ...filters, paginationToken: token },
-        }),
-      });
-      const lastPage = pages[pages.length - 1] ?? {};
-      return successResult(
-        searchOrdersOutputSchema,
-        toSearchOrdersOutput(projectSearchOrdersResponse({
-          orders: pages.flatMap((page) => Array.isArray(page.orders) ? page.orders : []),
-          pagination: { nextToken, hasMore: Boolean(nextToken) },
-          lastUpdatedBefore: lastPage.lastUpdatedBefore,
-          createdBefore: lastPage.createdBefore,
-        })),
+    async (input, extra) => {
+      const toolStartedAt = now();
+      const deadlineAt = toolStartedAt + searchOrdersBudgetMs;
+      const budget = abortAfter(
+        searchOrdersBudgetMs,
+        new SpApiRequestBudgetExceededError(),
       );
+      const signal = AbortSignal.any([extra.signal, budget.signal]);
+      try {
+        const {
+          marketplaceIds,
+          paginationToken,
+          autoPage,
+          createdAfter,
+          createdBefore,
+          lastUpdatedAfter,
+          lastUpdatedBefore,
+          fulfillmentStatuses,
+          fulfilledBy,
+          maxResultsPerPage,
+        } = input;
+        const filters = {
+          createdAfter,
+          createdBefore,
+          lastUpdatedAfter,
+          lastUpdatedBefore,
+          fulfillmentStatuses,
+          fulfilledBy,
+          maxResultsPerPage,
+        };
+        validateSearchOrderFilters(filters);
+        const access = await resolveAccountInput(input, signal);
+        const seller = access.account.externalAccountId;
+        const currentTenantId = access.credentialOwnerId;
+        const region = regionForMarketplaces(marketplaceIds);
+        const { pages, nextToken, budgetExhausted } = await readPages({
+          autoPage,
+          initialToken: paginationToken,
+          deadlineAt,
+          signal: extra.signal,
+          now,
+          read: (token, requestDeadlineAt) => readSpApi({
+            sellingPartnerId: seller,
+            tenantId: currentTenantId,
+            region,
+            path: "/orders/2026-01-01/orders",
+            query: { marketplaceIds, ...filters, paginationToken: token },
+            deadlineAt: requestDeadlineAt,
+            signal,
+          }),
+        });
+        if (budgetExhausted) {
+          logger.write("warn", "mcp.pagination.budget_exhausted", {
+            tool: "amazon_search_orders",
+            pages_completed: pages.length,
+            budget_ms: searchOrdersBudgetMs,
+            duration_ms: Math.max(0, now() - toolStartedAt),
+            result: "success",
+          });
+        }
+        const lastPage = pages[pages.length - 1] ?? {};
+        return successResult(
+          searchOrdersOutputSchema,
+          toSearchOrdersOutput(projectSearchOrdersResponse({
+            orders: pages.flatMap((page) => Array.isArray(page.orders) ? page.orders : []),
+            pagination: { nextToken, hasMore: Boolean(nextToken) },
+            lastUpdatedBefore: lastPage.lastUpdatedBefore,
+            createdBefore: lastPage.createdBefore,
+          })),
+        );
+      } finally {
+        budget.dispose();
+      }
     },
   );
 
@@ -966,7 +1057,7 @@ export function createAmazonMcpServer(
   );
 
   const inventorySchema = withAccount({
-    marketplaceId,
+    marketplaceId: fbaInventoryMarketplaceId,
     details: z.boolean().default(true),
     startDateTime: timestamp.optional(),
     sellerSkus: z.array(z.string().min(1).max(50)).max(50).optional(),
@@ -1034,7 +1125,9 @@ export function createAmazonMcpServer(
 
   const listingIncludedData = ["summaries", "issues", "fulfillmentAvailability"] as const;
   const listingBaseSchema = withAccount({
-    marketplaceId,
+    marketplaceId: marketplaceId.refine(supportsListingsItems, {
+      message: "marketplaceId is not supported by Listings Items",
+    }),
   });
 
     server.registerTool(
@@ -1122,7 +1215,7 @@ export function createAmazonMcpServer(
       title: "Get FBA inventory by seller SKU",
       description: accountDescription("Get the FBA inventory summary for one seller SKU and marketplace."),
       inputSchema: withAccount({
-        marketplaceId,
+        marketplaceId: fbaInventoryMarketplaceId,
         sellerSku: z.string().min(1).max(50),
         details: z.boolean().default(true),
       }),

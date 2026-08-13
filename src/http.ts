@@ -8,10 +8,12 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import express, { type NextFunction, type Request, type Response } from "express";
 
 import { registerAdminAccountRoutes } from "./admin-accounts.js";
+import { registerAdminAdsRoutes, type AdminAdsService } from "./admin-ads.js";
 import { registerAdminAgentRoutes, type AdminAgentService } from "./admin-agents.js";
 import { registerAdminAuditRoutes, type AdminAuditService } from "./admin-audit.js";
 import { registerAdminBindingRoutes } from "./admin-bindings.js";
 import { registerAdminDashboardRoutes, type AdminDashboardDeps } from "./admin-dashboard.js";
+import { registerAdminOaRoutes, type AdminOaOptions } from "./admin-oa.js";
 import { registerAdminSessionRoutes, type AdminSessionManager } from "./admin-session.js";
 import type { AmazonPrincipal } from "./identity.js";
 import {
@@ -25,12 +27,14 @@ import {
   type ToolRequestContext,
 } from "./errors.js";
 import { CONNECTED_ACCOUNT_DISCOVERY_MANIFEST, CONNECTED_ACCOUNT_PROTOCOL_SCOPES } from "./connected-account.js";
-import { actorTypeFromAuth } from "./logger.js";
+import { actorTypeFromAuth, NULL_LOGGER, type StructuredLogger } from "./logger.js";
+import {
+  NULL_MCP_ARGUMENT_LOGGER,
+  type McpArgumentLogger,
+} from "./mcp-argument-logger.js";
 import { isLoopbackAddress, mcpMetrics } from "./metrics.js";
-import { NULL_LOGGER, type StructuredLogger } from "./logger.js";
 import { PUBLIC_MCP_PATH } from "./portal.js";
 import type { PostgresConnectedAccountAccountStore } from "./postgres-connected-account-accounts.js";
-import type { PrincipalRequestLimiter } from "./rate-limit.js";
 import {
   registerAmazonPortal,
   type AmazonPortalOptions,
@@ -125,6 +129,31 @@ function attemptId(value: unknown): string {
   return value;
 }
 
+function toolArgumentCalls(body: unknown): Array<{
+  tool: string;
+  argumentsPresent: boolean;
+  arguments: unknown;
+}> {
+  const messages = Array.isArray(body) ? body : [body];
+  return messages.flatMap((message) => {
+    if (typeof message !== "object" || message === null || Array.isArray(message)) return [];
+    const request = message as Record<string, unknown>;
+    if (request.method !== "tools/call") return [];
+    const params = typeof request.params === "object"
+      && request.params !== null
+      && !Array.isArray(request.params)
+      ? request.params as Record<string, unknown>
+      : undefined;
+    const argumentsPresent = params !== undefined
+      && Object.prototype.hasOwnProperty.call(params, "arguments");
+    return [{
+      tool: typeof params?.name === "string" ? params.name : "unknown",
+      argumentsPresent,
+      arguments: argumentsPresent ? params.arguments : undefined,
+    }];
+  });
+}
+
 export function createAmazonMcpHttpApp(options: {
   authenticate?: (token: string) => Promise<AmazonPrincipal | null>;
   host: string;
@@ -135,7 +164,7 @@ export function createAmazonMcpHttpApp(options: {
   lwaConfigured?: boolean;
   readinessCheck?: () => Promise<ReadinessResult>;
   logger?: StructuredLogger;
-  requestLimiter?: PrincipalRequestLimiter;
+  argumentLogger?: Pick<McpArgumentLogger, "log">;
   connected-accountManifest?: typeof CONNECTED_ACCOUNT_DISCOVERY_MANIFEST;
   connected-accountAccounts?: ConnectedAccountAccountService;
   adminSessions?: AdminSessionManager;
@@ -143,9 +172,12 @@ export function createAmazonMcpHttpApp(options: {
   adminAudits?: AdminAuditService;
   adminBindingAccounts?: PostgresConnectedAccountAccountStore;
   adminDashboard?: AdminDashboardDeps;
+  adminAds?: AdminAdsService;
+  adminOa?: AdminOaOptions;
   portal?: AmazonPortalOptions;
 }) {
   const logger = options.logger ?? NULL_LOGGER;
+  const argumentLogger = options.argumentLogger ?? NULL_MCP_ARGUMENT_LOGGER;
   const app = createMcpExpressApp({
     host: options.host,
     allowedHosts: options.allowedHosts,
@@ -193,11 +225,40 @@ export function createAmazonMcpHttpApp(options: {
   });
 
   const webDistPath = path.resolve(process.cwd(), "web/admin/dist");
+  const privacyPath = [
+    path.join(webDistPath, "privacy.html"),
+    path.resolve(process.cwd(), "web/admin/public/privacy.html"),
+  ].find((candidate) => fs.existsSync(candidate));
+  if (privacyPath) {
+    app.get("/privacy", (_request, response, next) => {
+      response.setHeader("cache-control", "no-store");
+      response.setHeader("content-type", "text/html; charset=utf-8");
+      response.setHeader("x-content-type-options", "nosniff");
+      response.sendFile(privacyPath, (error) => error ? next(error) : undefined);
+    });
+  }
+  const companyPath = [
+    path.join(webDistPath, "company.html"),
+    path.resolve(process.cwd(), "web/admin/public/company.html"),
+  ].find((candidate) => fs.existsSync(candidate));
+  if (companyPath) {
+    app.get("/company", (_request, response, next) => {
+      response.setHeader("cache-control", "no-store");
+      response.setHeader("content-type", "text/html; charset=utf-8");
+      response.setHeader("x-content-type-options", "nosniff");
+      response.sendFile(companyPath, (error) => error ? next(error) : undefined);
+    });
+  }
   if (fs.existsSync(webDistPath)) {
     app.use(express.static(webDistPath, {
       index: "index.html",
       setHeaders: (res, filePath) => {
-        if (filePath.endsWith("index.html") || filePath.endsWith("admin-config.js")) {
+        if (
+          filePath.endsWith("index.html")
+          || filePath.endsWith("admin-config.js")
+          || filePath.endsWith("company.html")
+          || filePath.endsWith("privacy.html")
+        ) {
           res.setHeader("cache-control", "no-store");
         } else {
           res.setHeader("cache-control", "public, max-age=31536000, immutable");
@@ -208,6 +269,9 @@ export function createAmazonMcpHttpApp(options: {
 
   if (options.adminSessions && options.adminAudits) {
     registerAdminSessionRoutes(app, options.adminSessions, options.adminAudits);
+    if (options.adminOa) {
+      registerAdminOaRoutes(app, options.adminSessions, options.adminAudits, options.adminOa);
+    }
     registerAdminAuditRoutes(app, options.adminSessions, options.adminAudits, options.adminAgents);
     if (options.adminAgents) {
       registerAdminAgentRoutes(app, options.adminSessions, options.adminAgents, options.adminAudits);
@@ -234,6 +298,15 @@ export function createAmazonMcpHttpApp(options: {
           options.adminAgents,
           options.adminAudits,
           options.adminDashboard.pool,
+        );
+      }
+      if (options.adminAds) {
+        registerAdminAdsRoutes(
+          app,
+          options.adminSessions,
+          options.adminAgents,
+          options.adminAudits,
+          options.adminAds,
         );
       }
     }
@@ -471,32 +544,6 @@ export function createAmazonMcpHttpApp(options: {
       });
       return;
     }
-    const limit = options.requestLimiter?.acquire(principal.tenantId);
-    if (limit && !limit.accepted) {
-      logger.write("warn", "mcp.rate_limited", {
-        request_id: requestId,
-        actor_type: actorTypeFromAuth(principal.authType),
-        actor_id_hash: actorIdHash,
-        error_code: "rate_limited",
-        result: "rejected",
-      });
-      mcpMetrics.inc("mcp_rate_limited_total", "MCP rate limited requests", {
-        actor_type: actorTypeFromAuth(principal.authType),
-        error_code: "rate_limited",
-      });
-      response.setHeader("retry-after", String(limit.retryAfterSeconds));
-      response.status(429).json({
-        jsonrpc: "2.0",
-        error: { code: -32001, message: "Too many requests" },
-        id: null,
-      });
-      return;
-    }
-    if (limit?.accepted) {
-      const release = limit.release;
-      response.once("finish", release);
-      response.once("close", release);
-    }
     response.locals.amazonPrincipal = principal;
     next();
   });
@@ -506,22 +553,46 @@ export function createAmazonMcpHttpApp(options: {
     const requestId = String(response.locals.requestId);
     const principal = response.locals.amazonPrincipal as AmazonPrincipal;
     const method = typeof request.body?.method === "string" ? request.body.method : "unknown";
-    const tool = method === "tools/call" && typeof request.body?.params?.name === "string"
-      ? request.body.params.name
+    const tool = method === "tools/call"
+      ? (typeof request.body?.params?.name === "string" ? request.body.params.name : "unknown")
       : undefined;
-    const server = options.createServer(response.locals.amazonPrincipal as AmazonPrincipal);
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     const actorType = actorTypeFromAuth(principal.authType);
     const actorIdHash = logger.hash(
       principal.authType === "connected-account" ? principal.employeeId : principal.agentId,
     );
     const methodLabel = METHODS_FOR_LOG.has(method) ? method : "unknown";
+    const argumentCalls = toolArgumentCalls(request.body);
     const toolContext: ToolRequestContext = {
       requestId,
       ...(tool ? { tool } : {}),
     };
+    let server: McpServer | undefined;
+    let transport: StreamableHTTPServerTransport | undefined;
     try {
       await runWithToolRequestContext(toolContext, async () => {
+        for (const argumentCall of argumentCalls) {
+          try {
+            await argumentLogger.log({
+              requestId,
+              tool: argumentCall.tool,
+              actorType,
+              actorIdHash,
+              argumentsPresent: argumentCall.argumentsPresent,
+              arguments: argumentCall.arguments,
+            });
+          } catch {
+            logger.write("error", "mcp.argument_log.failed", {
+              request_id: requestId,
+              tool: argumentCall.tool,
+              actor_type: actorType,
+              actor_id_hash: actorIdHash,
+              result: "error",
+              error_code: "internal_error",
+            });
+          }
+        }
+        server = options.createServer(principal);
+        transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
         await server.connect(transport);
         await transport.handleRequest(request, response, request.body);
       });
@@ -547,8 +618,8 @@ export function createAmazonMcpHttpApp(options: {
         });
       }
     } finally {
-      await transport.close().catch(() => undefined);
-      await server.close().catch(() => undefined);
+      await transport?.close().catch(() => undefined);
+      await server?.close().catch(() => undefined);
       const durationMs = Math.round((performance.now() - startedAt) * 10) / 10;
       const result = toolContext.failureCode || response.statusCode >= 400 ? "error" : "success";
       logger.write("info", "mcp.request.completed", {

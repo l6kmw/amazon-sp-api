@@ -62,7 +62,7 @@ MCP 不注册创建授权、授权轮询、列出连接、续期或断开连接�
 
 Refresh Token 使用 AES-256-GCM v2 envelope 加密持久化，并继续解密 legacy/v2 历史数据。旧单密钥作为 `keyId: k0` 放入 keyring 即可，无需为升级预先重加密。Access Token 只保存在 Redis/进程短期缓存。
 
-JWT、Refresh Token、Access Token、OAuth code/state、预签名 URL 永不进入 MCP 输出、浏览器页面、日志或指标。
+HTTP Authorization Header、已验证的 ConnectedAccount JWT、服务持有的 Refresh/Access Token、OAuth code/state 和预签名 URL 永不复制到 MCP 输出、浏览器页面、普通 stdout、PostgreSQL、指标或告警。唯一日志例外是调用者提交的完整 `tools/call` arguments 会在 Schema 校验前写入受限 JSONL，可能包含调用者提供的 Token 类值，并按创建时间保留 168 小时。
 
 ## 5. Seller 只读 MCP 目录
 
@@ -84,13 +84,12 @@ Amazon 403 被转换为 `AMAZON_ROLE_REQUIRED`，只返回 operation 和所需�
 - Reports、Data Kiosk 和文本 Feed 文档按页临时读取，单页最多 200 条或 256 KiB，游标 15 分钟过期。不落盘、不记录正文、不返回预签名 URL。
 - 文档游标使用从 credential keyring 派生的独立 AES-GCM 密钥，绑定 issuer/employee/account/operation/job/document/offset/expiry，支持密钥轮换并拒绝跨员工重放。
 
-## 7. 限流、缓存和重试
+## 7. 缓存、上游限流响应和重试
 
-- MCP 限制固定为每 Principal tenant 120 请求/分钟、8 并发。
+- Provider 不对 MCP 入口实施请求/并发限流，也不根据 Amazon usage-plan Header 本地排队；调用频率由 ConnectedAccount 端统一控制。
 - LWA 本地 cache、in-flight 和 Redis access/lock key 使用 `credential_id + refresh_token_revision`；共享 Employee 不按调用者 workspace 重复刷新。
 - 账号连接缓存 30 秒，Amazon 区域缓存 24 小时。这些是安全常量，不是 YAML 配置。
-- SP-API 客户端按 operation 维度解析 Amazon usage-plan Header 并自适应限流。
-- GET 和明确幂等的查询可按有界退避重试。创建 Report/Data Kiosk 任务遇到结果不确定的失败时不自动重放。
+- Amazon 返回 429 时映射为 `rate_limited`。GET 和明确幂等的查询可按有界退避重试；创建 Report/Data Kiosk 任务遇到结果不确定的失败时不自动重放。
 - 只有 Amazon 明确的 Access Token 失效可触发锁内强制刷新并重试一次；权限错误、5xx 或业务校验失败不刷新凭据。
 
 ## 8. 存储与生命周期

@@ -61,7 +61,7 @@ test("rejects every removed mcp field with a targeted migration hint", async () 
     ["identityValidationUrl: http://host.docker.internal:8080/api/v1/admin/session", /verifies ConnectedAccount JWTs locally/],
     ["identityHealthUrl: http://host.docker.internal:8080/healthz", /readiness no longer calls/],
     ["enableListingsTools: false", /Listings tools are always enabled/],
-    ["limits: { requestsPerMinute: 10 }", /fixed at 120 requests\/minute and 8 concurrent/],
+    ["limits: { requestsPerMinute: 10 }", /does not apply local request or concurrency limits/],
     ["cache: { connectionTtlMs: 1 }", /cache TTLs are fixed/],
     ["allowLegacyAuth: true", /only ConnectedAccount Employee JWTs/],
     ["legacyAuthToken: old", /shared bearer tokens are not supported/],
@@ -136,6 +136,59 @@ test("loads the admin session key only from a private file with PostgreSQL", asy
     loadConfig(await configFile(`${validYaml}admin:\n  sessionSecretFile: ${secretFile}\n`)),
     /admin requires storage\.postgres/,
   );
+});
+
+test("loads strict OA OIDC settings and derives the fixed callback", async () => {
+  const initial = await configFile(validYaml);
+  const directory = dirname(initial);
+  const sessionSecretFile = join(directory, "admin-session.key");
+  const clientSecretFile = join(directory, "oa-client.secret");
+  await writeFile(sessionSecretFile, randomBytes(32).toString("base64"), { mode: 0o600 });
+  await writeFile(clientSecretFile, "oa-client-secret-with-enough-entropy", { mode: 0o600 });
+  const yaml = validYaml
+    .replace("storage:\n  dataDirectory: /data", `storage:
+  dataDirectory: /data
+  postgres:
+    url: postgresql://amazon:redacted@127.0.0.1:5432/amazon`)
+    + `admin:
+  sessionSecretFile: ${sessionSecretFile}
+  oa:
+    issuer: https://oa.example.com/tenant
+    clientId: amazon-admin
+    clientSecretFile: ${clientSecretFile}
+    subject: oa-admin-subject
+`;
+  const config = await loadConfig(await configFile(yaml));
+  assert.deepEqual(config.adminOa, {
+    issuer: "https://oa.example.com/tenant",
+    clientId: "amazon-admin",
+    clientSecret: "oa-client-secret-with-enough-entropy",
+    subject: "oa-admin-subject",
+    scope: "openid profile",
+    redirectUri: "https://api.example.com/api/v1/admin/oa/callback",
+  });
+
+  await assert.rejects(
+    loadConfig(await configFile(yaml.replace("https://oa.example.com/tenant", "http://oa.example.com/tenant"))),
+    /admin\.oa\.issuer.*HTTPS issuer URL/,
+  );
+  await assert.rejects(
+    loadConfig(await configFile(yaml.replace(
+      "https://oa.example.com/tenant",
+      "https://oa.example.com/.well-known/openid-configuration",
+    ))),
+    /admin\.oa\.issuer.*discovery-document path/,
+  );
+  await assert.rejects(
+    loadConfig(await configFile(yaml.replace("    subject: oa-admin-subject\n", "    subject: oa-admin-subject\n    scopes: [profile]\n"))),
+    /admin\.oa\.scopes must include openid/,
+  );
+  await assert.rejects(
+    loadConfig(await configFile(yaml.replace("    subject: oa-admin-subject\n", "    subject: oa-admin-subject\n    redirectUri: https://attacker.example/callback\n"))),
+    /admin\.oa\.redirectUri is not supported/,
+  );
+  await chmod(clientSecretFile, 0o644);
+  await assert.rejects(loadConfig(await configFile(yaml)), /admin\.oa\.clientSecretFile.*0600 or stricter/);
 });
 
 test("requires PostgreSQL and Redis when ConnectedAccount is enabled", async () => {

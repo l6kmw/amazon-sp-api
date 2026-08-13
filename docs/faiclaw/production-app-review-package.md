@@ -92,7 +92,7 @@ Authenticated ConnectedAccount employee
 | Token store | AES-256-GCM ciphertext、IV/tag、key ID、所有权元数据 | 受限服务账号、PostgreSQL 权限和 keyring；无明文 Refresh Token 落盘 |
 | ConnectedAccount JWT verifier | issuer、audience、kid、Scope、时间声明 | 本地 `connected-account.jwtKeys` 验签；不请求外部身份服务 |
 | 缓存 | 短期 LWA Access Token、连接/区域元数据 | Redis 与进程内存；连接断开或 TTL/重启时失效 |
-| Structured logs | Event, timestamp, status, latency, request ID, hashed tenant/seller identifiers | No authorization header, auth code, refresh token, client secret, buyer or recipient data |
+| Structured logs | Event, timestamp, status, latency, request ID, hashed tenant/seller identifiers; complete `tools/call` arguments in a separate restricted JSONL | Complete arguments are retained for 168 hours and never written to ordinary stdout or PostgreSQL; ordinary logs contain no authorization header, auth code, refresh token, client secret, buyer or recipient data |
 
 The MCP service does not persist SP-API business responses in its own database. It projects upstream responses through explicit allowlists before returning them. Any broader product-side retention outside this service must be separately documented before submission.
 
@@ -104,13 +104,13 @@ The MCP service does not persist SP-API business responses in its own database. 
 >
 > LWA refresh tokens are encrypted at rest with AES-256-GCM. LWA client credentials and encryption keys are stored in restricted server environment files and are not committed to source control. Access tokens are cached only in process memory and are invalidated when a connection is removed.
 >
-> Requests and responses are validated against a frozen snapshot of Amazon's official API models. Buyer and recipient datasets are not requested, unknown upstream fields are discarded, and operation-specific PII fields and presigned URLs are removed. Logs contain operational metadata and keyed hashes of employee/account identifiers; they do not contain authorization headers, OAuth codes, JWTs, access tokens, refresh tokens, client secrets, document bodies, or raw buyer/recipient data.
+> Requests and responses are validated against a frozen snapshot of Amazon's official API models. Buyer and recipient datasets are not requested, unknown upstream fields are discarded, and operation-specific PII fields and presigned URLs are removed. Ordinary logs contain operational metadata and keyed hashes of employee/account identifiers; they do not contain authorization headers, OAuth codes, JWTs, access tokens, refresh tokens, client secrets, document bodies, or raw buyer/recipient data. As an explicit diagnostic exception, complete `tools/call` arguments are written only to a restricted JSONL, retained for 168 hours, and never copied to ordinary stdout or PostgreSQL.
 
 ### 必须由组织补齐的政策事实
 
 以下内容不能由代码推断，提交前必须由法务/运维确认并与公开政策一致：
 
-- SP-API 数据及运维日志的具体保留期限；
+- 除明确保留 168 小时的 `tools/call` 参数 JSONL 外，其他 SP-API 数据及运维日志的具体保留期限；
 - 数据删除请求的接收渠道、处理时限和验证方式；
 - 云主机、CDN、监控、日志、备份等外部共享方/子处理者；
 - 安全事件通知时限、值班负责人和升级路径；

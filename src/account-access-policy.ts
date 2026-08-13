@@ -3,6 +3,7 @@ import type { Pool } from "pg";
 import type { ConnectedAccountConnectedAccount } from "./connected-account-accounts.js";
 import { ConnectedAccountAccountError } from "./connected-account-accounts.js";
 import type { AmazonPrincipal } from "./identity.js";
+import { abortablePoolQuery } from "./postgres-query.js";
 
 interface AccessRow {
   account_id: string;
@@ -20,8 +21,15 @@ export interface AmazonAccountAccess {
 }
 
 export interface AccountAccessPolicy {
-  listAccounts(principal: AmazonPrincipal): Promise<ConnectedAccountConnectedAccount[]>;
-  resolveAccount(principal: AmazonPrincipal, accountId: string): Promise<AmazonAccountAccess>;
+  listAccounts(
+    principal: AmazonPrincipal,
+    signal?: AbortSignal,
+  ): Promise<ConnectedAccountConnectedAccount[]>;
+  resolveAccount(
+    principal: AmazonPrincipal,
+    accountId: string,
+    signal?: AbortSignal,
+  ): Promise<AmazonAccountAccess>;
 }
 
 function account(row: AccessRow): ConnectedAccountConnectedAccount {
@@ -42,9 +50,12 @@ function account(row: AccessRow): ConnectedAccountConnectedAccount {
 export class PostgresAccountAccessPolicy implements AccountAccessPolicy {
   constructor(readonly pool: Pool) {}
 
-  async listAccounts(principal: AmazonPrincipal): Promise<ConnectedAccountConnectedAccount[]> {
+  async listAccounts(
+    principal: AmazonPrincipal,
+    signal?: AbortSignal,
+  ): Promise<ConnectedAccountConnectedAccount[]> {
     const result = principal.authType === "connected-account"
-      ? await this.pool.query<AccessRow>(`
+      ? await abortablePoolQuery<AccessRow>(this.pool, `
           SELECT a.account_id, g.connection_id, a.selling_partner_id, a.display_name,
                  c.credential_owner_id, b.remark, b.bound_at
           FROM amazon_sp_api.employee_account_binding b
@@ -55,8 +66,8 @@ export class PostgresAccountAccessPolicy implements AccountAccessPolicy {
           WHERE b.issuer = $1 AND b.employee_id = $2 AND b.status = 'active'
             AND g.status = 'active' AND a.status = 'active' AND c.status = 'active'
           ORDER BY b.bound_at, g.connection_id
-        `, [principal.issuer, principal.employeeId])
-      : await this.pool.query<AccessRow>(`
+        `, [principal.issuer, principal.employeeId], signal)
+      : await abortablePoolQuery<AccessRow>(this.pool, `
           SELECT DISTINCT ON (a.account_id)
                  a.account_id, g.connection_id, a.selling_partner_id, a.display_name,
                  c.credential_owner_id, NULL::text AS remark, NULL::timestamptz AS bound_at
@@ -67,16 +78,17 @@ export class PostgresAccountAccessPolicy implements AccountAccessPolicy {
             ON c.credential_id = g.credential_id AND c.status = 'active'
           WHERE a.status = 'active'
           ORDER BY a.account_id, g.issuer, g.connection_id
-        `);
+        `, [], signal);
     return result.rows.map(account);
   }
 
   async resolveAccount(
     principal: AmazonPrincipal,
     accountId: string,
+    signal?: AbortSignal,
   ): Promise<AmazonAccountAccess> {
     const result = principal.authType === "connected-account"
-      ? await this.pool.query<AccessRow>(`
+      ? await abortablePoolQuery<AccessRow>(this.pool, `
           SELECT a.account_id, g.connection_id, a.selling_partner_id, a.display_name,
                  c.credential_owner_id, b.remark, b.bound_at
           FROM amazon_sp_api.employee_account_binding b
@@ -87,8 +99,8 @@ export class PostgresAccountAccessPolicy implements AccountAccessPolicy {
           WHERE b.issuer = $1 AND b.employee_id = $2 AND b.status = 'active'
             AND g.status = 'active' AND a.status = 'active' AND c.status = 'active'
             AND a.account_id = $3
-        `, [principal.issuer, principal.employeeId, accountId])
-      : await this.pool.query<AccessRow>(`
+        `, [principal.issuer, principal.employeeId, accountId], signal)
+      : await abortablePoolQuery<AccessRow>(this.pool, `
           SELECT a.account_id, g.connection_id, a.selling_partner_id, a.display_name,
                  c.credential_owner_id, NULL::text AS remark, NULL::timestamptz AS bound_at
           FROM amazon_sp_api.amazon_account a
@@ -99,9 +111,10 @@ export class PostgresAccountAccessPolicy implements AccountAccessPolicy {
           WHERE a.status = 'active' AND a.account_id = $1
           ORDER BY g.issuer, g.connection_id
           LIMIT 1
-        `, [accountId]);
+        `, [accountId], signal);
     const row = result.rows[0];
     if (!row) throw new ConnectedAccountAccountError(404, "not_found", "Account not found");
     return { account: account(row), credentialOwnerId: row.credential_owner_id };
   }
+
 }

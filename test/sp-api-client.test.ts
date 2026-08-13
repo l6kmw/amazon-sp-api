@@ -5,7 +5,10 @@ import {
   AmazonSpApiClient,
   regionForMarketplace,
   regionForMarketplaces,
+  SpApiRequestBudgetExceededError,
+  supportsListingsItems,
 } from "../src/sp-api-client.js";
+import { AmazonMcpError } from "../src/errors.js";
 import { createStructuredLogger } from "../src/logger.js";
 
 test("routes marketplace requests, serializes arrays, and retries throttling", async () => {
@@ -61,6 +64,10 @@ test("routes marketplace requests, serializes arrays, and retries throttling", a
   assert.equal(logs.length, 2);
   assert.ok(logs.some((line) => line.includes('"event":"sp_api.request.completed"')));
   assert.ok(logs.some((line) => line.includes('"event":"sp_api.request.failed"')));
+  const failedLog = logs
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+    .find((record) => record.event === "sp_api.request.failed");
+  assert.equal(failedLog?.upstream_status, 429);
   assert.doesNotMatch(logs.join("\n"), /access-token|A1SELLER|user-1/);
 });
 
@@ -110,14 +117,18 @@ test("retries transport failures only for safe operations", async () => {
   assert.equal(createCalls, 1);
 });
 
-test("adapts request spacing to Amazon operation usage-plan headers", async () => {
+test("does not delay requests based on Amazon usage-plan headers", async () => {
   const waits: number[] = [];
+  let calls = 0;
   const client = new AmazonSpApiClient({
     accessTokens: { async getAccessToken() { return "access-token"; } },
-    fetchImpl: (async () => new Response(JSON.stringify({ ok: true }), {
-      status: 200,
-      headers: { "x-amzn-ratelimit-limit": "2" },
-    })) as typeof fetch,
+    fetchImpl: (async () => {
+      calls += 1;
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "x-amzn-ratelimit-limit": "0.025" },
+      });
+    }) as typeof fetch,
     sleep: async (milliseconds) => { waits.push(milliseconds); },
   });
   const request = () => client.request({
@@ -131,8 +142,198 @@ test("adapts request spacing to Amazon operation usage-plan headers", async () =
   });
   await request();
   await request();
-  assert.equal(waits.length, 1);
-  assert.ok(waits[0]! > 0 && waits[0]! <= 500);
+  assert.deepEqual(waits, []);
+  assert.equal(calls, 2);
+});
+
+test("does not retry throttling when the backoff exceeds its deadline", async () => {
+  let calls = 0;
+  const waits: number[] = [];
+  const client = new AmazonSpApiClient({
+    accessTokens: { async getAccessToken() { return "access-token"; } },
+    fetchImpl: (async () => {
+      calls += 1;
+      return new Response("", {
+        status: 429,
+        headers: { "retry-after": "2" },
+      });
+    }) as typeof fetch,
+    sleep: async (milliseconds) => { waits.push(milliseconds); },
+    now: () => 10_000,
+  });
+
+  await assert.rejects(client.get({
+    sellingPartnerId: "A1SELLER",
+    tenantId: "workspace-1",
+    region: "na",
+    path: "/orders/2026-01-01/orders",
+    deadlineAt: 11_000,
+  }), SpApiRequestBudgetExceededError);
+  assert.equal(calls, 1);
+  assert.deepEqual(waits, []);
+});
+
+test("bounds access-token acquisition by the request deadline", async () => {
+  let releaseToken!: (token: string) => void;
+  const token = new Promise<string>((resolve) => { releaseToken = resolve; });
+  let fetchCalls = 0;
+  const client = new AmazonSpApiClient({
+    accessTokens: { async getAccessToken() { return token; } },
+    fetchImpl: (async () => {
+      fetchCalls += 1;
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }) as typeof fetch,
+  });
+
+  try {
+    await assert.rejects(client.get({
+      sellingPartnerId: "A1SELLER",
+      tenantId: "workspace-1",
+      region: "na",
+      path: "/orders/2026-01-01/orders",
+      deadlineAt: Date.now() + 20,
+    }), SpApiRequestBudgetExceededError);
+    assert.equal(fetchCalls, 0);
+  } finally {
+    releaseToken("late-token");
+  }
+});
+
+test("bounds success and error response bodies by the request deadline", async () => {
+  for (const status of [200, 403]) {
+    let releaseBody!: (body: unknown) => void;
+    const body = new Promise<unknown>((resolve) => { releaseBody = resolve; });
+    const response = new Response("", { status });
+    Object.defineProperty(response, "json", { value: () => body });
+    const client = new AmazonSpApiClient({
+      accessTokens: { async getAccessToken() { return "access-token"; } },
+      fetchImpl: (async () => response) as typeof fetch,
+    });
+
+    try {
+      await assert.rejects(client.get({
+        sellingPartnerId: "A1SELLER",
+        tenantId: "workspace-1",
+        region: "na",
+        path: "/orders/2026-01-01/orders",
+        deadlineAt: Date.now() + 20,
+      }), SpApiRequestBudgetExceededError, `status ${status}`);
+    } finally {
+      releaseBody(status === 200
+        ? { orders: [] }
+        : { errors: [{ code: "Unauthorized" }] });
+    }
+  }
+});
+
+test("cancels an unread response body when the request budget expires", async () => {
+  let bodyCancelled = false;
+  const body = new ReadableStream({
+    pull() {},
+    cancel() { bodyCancelled = true; },
+  });
+  const response = new Response(body, { status: 200 });
+  Object.defineProperty(response, "json", { value: () => new Promise(() => {}) });
+  const client = new AmazonSpApiClient({
+    accessTokens: { async getAccessToken() { return "access-token"; } },
+    fetchImpl: (async () => response) as typeof fetch,
+  });
+
+  await assert.rejects(client.get({
+    sellingPartnerId: "A1SELLER",
+    tenantId: "workspace-1",
+    region: "na",
+    path: "/orders/2026-01-01/orders",
+    deadlineAt: Date.now() + 20,
+  }), SpApiRequestBudgetExceededError);
+  assert.equal(bodyCancelled, true);
+});
+
+test("does not wait for response body cancellation after the request budget expires", async () => {
+  let bodyCancellationStarted = false;
+  const body = new ReadableStream({
+    pull() {},
+    cancel() {
+      bodyCancellationStarted = true;
+      return new Promise(() => {});
+    },
+  });
+  const response = new Response(body, { status: 200 });
+  Object.defineProperty(response, "json", { value: () => new Promise(() => {}) });
+  const client = new AmazonSpApiClient({
+    accessTokens: { async getAccessToken() { return "access-token"; } },
+    fetchImpl: (async () => response) as typeof fetch,
+  });
+
+  let guard: NodeJS.Timeout | undefined;
+  try {
+    const outcome = await Promise.race([
+      client.get({
+        sellingPartnerId: "A1SELLER",
+        tenantId: "workspace-1",
+        region: "na",
+        path: "/orders/2026-01-01/orders",
+        deadlineAt: Date.now() + 20,
+      }).then(
+        () => "resolved" as const,
+        (error: unknown) => error,
+      ),
+      new Promise<"hung">((resolve) => {
+        guard = setTimeout(() => resolve("hung"), 250);
+      }),
+    ]);
+    assert.ok(outcome instanceof SpApiRequestBudgetExceededError);
+    assert.equal(bodyCancellationStarted, true);
+  } finally {
+    if (guard) clearTimeout(guard);
+  }
+});
+
+test("maps the internal response-body timeout to a stable upstream error", async () => {
+  for (const status of [200, 403]) {
+    const response = new Response("", { status });
+    Object.defineProperty(response, "json", { value: () => new Promise(() => {}) });
+    const client = new AmazonSpApiClient({
+      accessTokens: { async getAccessToken() { return "access-token"; } },
+      fetchImpl: (async () => response) as typeof fetch,
+      requestTimeoutMs: 20,
+    });
+
+    await assert.rejects(client.get({
+      sellingPartnerId: "A1SELLER",
+      tenantId: "workspace-1",
+      region: "na",
+      path: "/orders/2026-01-01/orders",
+      deadlineAt: Date.now() + 1_000,
+    }), (error: unknown) => {
+      assert.ok(error instanceof AmazonMcpError, `status ${status}`);
+      assert.equal(error.code, "UPSTREAM_SP_API", `status ${status}`);
+      assert.notEqual(error.name, "TimeoutError", `status ${status}`);
+      return true;
+    });
+  }
+});
+
+test("cancels retry backoff without issuing another request", async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  const client = new AmazonSpApiClient({
+    accessTokens: { async getAccessToken() { return "access-token"; } },
+    fetchImpl: (async () => {
+      calls += 1;
+      controller.abort();
+      throw new TypeError("network");
+    }) as typeof fetch,
+  });
+
+  await assert.rejects(client.get({
+    sellingPartnerId: "A1SELLER",
+    tenantId: "workspace-1",
+    region: "na",
+    path: "/orders/2026-01-01/orders",
+    signal: controller.signal,
+  }), (error: unknown) => (error as { name?: string }).name === "AbortError");
+  assert.equal(calls, 1);
 });
 
 test("recovers once from clear Amazon Unauthorized access-token failures", async () => {
@@ -324,6 +525,7 @@ test("maps SP-API request validation failures without exposing Amazon error text
 
 test("keeps Listings permission and not-found failures distinguishable by safe status", async () => {
   for (const status of [403, 404]) {
+    const logs: string[] = [];
     const client = new AmazonSpApiClient({
       accessTokens: { async getAccessToken() { return "access-token"; } },
       fetchImpl: (async () => new Response(JSON.stringify({
@@ -332,6 +534,10 @@ test("keeps Listings permission and not-found failures distinguishable by safe s
         status,
         headers: { "content-type": "application/json" },
       })) as typeof fetch,
+      logger: createStructuredLogger({
+        hashKey: "internal-secret",
+        write(line) { logs.push(line); },
+      }),
     });
 
     await assert.rejects(
@@ -350,6 +556,15 @@ test("keeps Listings permission and not-found failures distinguishable by safe s
         assert.doesNotMatch(value.message ?? "", /private upstream context/);
         return true;
       },
+    );
+    const failedLogs = logs
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((record) => record.event === "sp_api.request.failed");
+    assert.ok(failedLogs.length >= 1);
+    assert.ok(failedLogs.every((record) => record.upstream_status === status));
+    assert.doesNotMatch(
+      logs.join("\n"),
+      /private upstream context|access-token|A1SELLER|user-1|SKU/,
     );
   }
 });
@@ -380,7 +595,7 @@ test("maps SP-API network failures to a retryable stable error", async () => {
     },
   );
   assert.equal(JSON.parse(logs[0]!).event, "sp_api.request.failed");
-  assert.equal(JSON.parse(logs[0]!).error_code, "timeout");
+  assert.equal(JSON.parse(logs[0]!).error_code, "upstream_error");
 });
 
 test("maps malformed SP-API success responses to a stable upstream error", async () => {
@@ -403,4 +618,31 @@ test("maps malformed SP-API success responses to a stable upstream error", async
 test("routes Ireland and Belgium marketplaces to the EU endpoint", () => {
   assert.equal(regionForMarketplace("A28R8C7NBKEWEA"), "eu");
   assert.equal(regionForMarketplace("AMEN7PMS3EDWL"), "eu");
+});
+
+test("routes all North American marketplace participation IDs to NA", () => {
+  const marketplaceIds = [
+    "ATVPDKIKX0DER",
+    "A2EUQ1WTGCTBG2",
+    "A1AM78C64UM0Y8",
+    "A2Q3Y263D00KWC",
+    "A2ZV50J4W1RKNI",
+    "A3H6HPSLHAK3XG",
+    "A1MQXOICRS2Z7M",
+  ];
+
+  for (const marketplaceId of marketplaceIds) {
+    assert.equal(regionForMarketplace(marketplaceId), "na");
+  }
+  assert.equal(regionForMarketplaces(marketplaceIds), "na");
+});
+
+test("distinguishes Listings Items stores from nonstandard marketplace IDs", () => {
+  for (const marketplaceId of ["A2ZV50J4W1RKNI", "A3H6HPSLHAK3XG", "A1MQXOICRS2Z7M"]) {
+    assert.equal(supportsListingsItems(marketplaceId), false);
+  }
+  for (const marketplaceId of ["ATVPDKIKX0DER", "A1F83G8C2ARO7P", "A1VC38T7YXB528"]) {
+    assert.equal(supportsListingsItems(marketplaceId), true);
+  }
+  assert.equal(supportsListingsItems("UNKNOWN_MARKETPLACE"), false);
 });

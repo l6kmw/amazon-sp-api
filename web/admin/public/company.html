@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <meta
+      name="description"
+      content="Public company information for ConnectedAccount, operated by Example Operator Ltd."
+    />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://api.example.com/company" />
+    <title>Company Information | ConnectedAccount</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "name": "ConnectedAccount",
+        "legalName": "深圳市旧实现智能科技有限公司",
+        "url": "https://example.com",
+        "email": "support@example.com",
+        "identifier": "91440300MAKFW2Q969",
+        "address": {
+          "@type": "PostalAddress",
+          "streetAddress": "西丽街道松坪山社区高新北一道18号酷派大厦C座1801",
+          "addressLocality": "深圳",
+          "addressRegion": "广东省",
+          "postalCode": "518057",
+          "addressCountry": "CN"
+        }
+      }
+    </script>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #202421;
+        background: #f5f7f6;
+        font-synthesis: none;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-width: 280px;
+        line-height: 1.6;
+      }
+
+      a {
+        color: #176b4c;
+        text-underline-offset: 3px;
+      }
+
+      a:hover {
+        color: #0d4e36;
+      }
+
+      a:focus-visible {
+        outline: 3px solid #d99a2b;
+        outline-offset: 3px;
+      }
+
+      .site-header {
+        border-bottom: 1px solid #dfe3e0;
+        background: #ffffff;
+      }
+
+      .header-inner,
+      main,
+      .footer-inner {
+        width: min(960px, calc(100% - 40px));
+        margin: 0 auto;
+      }
+
+      .header-inner {
+        min-height: 72px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 11px;
+        color: #202421;
+        font-size: 16px;
+        font-weight: 720;
+        letter-spacing: 0;
+        text-decoration: none;
+      }
+
+      .brand-mark {
+        width: 32px;
+        height: 32px;
+        display: grid;
+        place-items: center;
+        border-radius: 7px;
+        color: #ffffff;
+        background: #176b4c;
+        font-size: 17px;
+        font-weight: 800;
+      }
+
+      .service-label {
+        color: #68716b;
+        font-size: 13px;
+        text-align: right;
+      }
+
+      main {
+        padding: 68px 0 88px;
+      }
+
+      .eyebrow {
+        margin: 0 0 12px;
+        color: #176b4c;
+        font-size: 13px;
+        font-weight: 750;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin-top: 0;
+        line-height: 1.25;
+        letter-spacing: 0;
+      }
+
+      h1 {
+        max-width: 760px;
+        margin-bottom: 16px;
+        color: #171a18;
+        font-size: 42px;
+        font-weight: 760;
+      }
+
+      .lead {
+        max-width: 760px;
+        margin: 0;
+        color: #4d5650;
+        font-size: 18px;
+      }
+
+      .verified-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 22px;
+        color: #4d5650;
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      .verified-label::before {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #1f8a5b;
+        content: "";
+      }
+
+      section {
+        margin-top: 54px;
+        padding-top: 50px;
+        border-top: 1px solid #dfe3e0;
+      }
+
+      h2 {
+        margin-bottom: 22px;
+        color: #202421;
+        font-size: 25px;
+        font-weight: 720;
+      }
+
+      .company-details {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 1px;
+        overflow: hidden;
+        border: 1px solid #dfe3e0;
+        border-radius: 8px;
+        background: #dfe3e0;
+      }
+
+      .detail {
+        min-width: 0;
+        padding: 20px;
+        background: #ffffff;
+      }
+
+      dt {
+        margin-bottom: 5px;
+        color: #68716b;
+        font-size: 12px;
+        font-weight: 720;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+        color: #202421;
+        font-size: 16px;
+        font-weight: 620;
+      }
+
+      .service-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 28px;
+      }
+
+      .service-item {
+        min-width: 0;
+      }
+
+      h3 {
+        margin-bottom: 9px;
+        color: #202421;
+        font-size: 17px;
+        font-weight: 700;
+      }
+
+      p {
+        color: #3f4842;
+        font-size: 16px;
+      }
+
+      .service-item p,
+      .integration-copy {
+        margin: 0;
+      }
+
+      .integration-copy {
+        max-width: 780px;
+      }
+
+      footer {
+        border-top: 1px solid #dfe3e0;
+        background: #ffffff;
+      }
+
+      .footer-inner {
+        min-height: 88px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        color: #68716b;
+        font-size: 13px;
+      }
+
+      .footer-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 18px;
+      }
+
+      @media (max-width: 720px) {
+        .header-inner,
+        main,
+        .footer-inner {
+          width: min(100% - 32px, 640px);
+        }
+
+        main {
+          padding: 48px 0 68px;
+        }
+
+        h1 {
+          font-size: 34px;
+        }
+
+        .company-details,
+        .service-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .service-grid {
+          gap: 26px;
+        }
+
+        .footer-inner {
+          min-height: 112px;
+          align-items: flex-start;
+          flex-direction: column;
+          justify-content: center;
+          gap: 7px;
+        }
+      }
+
+      @media (max-width: 360px) {
+        .header-inner,
+        main,
+        .footer-inner {
+          width: calc(100% - 24px);
+        }
+
+        .service-label {
+          display: none;
+        }
+
+        h1 {
+          font-size: 30px;
+        }
+
+        .lead {
+          font-size: 16px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="https://example.com/" aria-label="ConnectedAccount home">
+          <span class="brand-mark" aria-hidden="true">F</span>
+          <span>ConnectedAccount</span>
+        </a>
+        <span class="service-label">Public company information</span>
+      </div>
+    </header>
+
+    <main>
+      <p class="eyebrow">Company profile</p>
+      <h1>ConnectedAccount company information</h1>
+      <p class="lead">
+        ConnectedAccount is an AI employee collaboration platform operated by 深圳市旧实现智能科技有限公司.
+        This page provides the company's public identity and service information for customers and platform partners.
+      </p>
+      <p class="verified-label">Public company record</p>
+
+      <section aria-labelledby="identity-title">
+        <h2 id="identity-title">Business identity</h2>
+        <dl class="company-details">
+          <div class="detail">
+            <dt>Company legal name</dt>
+            <dd>深圳市旧实现智能科技有限公司</dd>
+          </div>
+          <div class="detail">
+            <dt>Brand and product</dt>
+            <dd>ConnectedAccount</dd>
+          </div>
+          <div class="detail">
+            <dt>Country of incorporation</dt>
+            <dd>China</dd>
+          </div>
+          <div class="detail">
+            <dt>Business registration number</dt>
+            <dd>91440300MAKFW2Q969</dd>
+          </div>
+          <div class="detail">
+            <dt>Registered address</dt>
+            <dd>西丽街道松坪山社区高新北一道18号酷派大厦C座1801, 南山区, 深圳, 广东省 518057, China</dd>
+          </div>
+          <div class="detail">
+            <dt>Company website</dt>
+            <dd><a href="https://example.com/">https://example.com</a></dd>
+          </div>
+          <div class="detail">
+            <dt>Support contact</dt>
+            <dd><a href="mailto:support@example.com">support@example.com</a></dd>
+          </div>
+        </dl>
+      </section>
+
+      <section aria-labelledby="services-title">
+        <h2 id="services-title">Services</h2>
+        <div class="service-grid">
+          <article class="service-item">
+            <h3>AI employee collaboration</h3>
+            <p>Workspace software for assigning, supervising, and reviewing business tasks performed by AI employees.</p>
+          </article>
+          <article class="service-item">
+            <h3>Business integrations</h3>
+            <p>Tenant-scoped connections to authorized business systems through official APIs and customer-approved access.</p>
+          </article>
+          <article class="service-item">
+            <h3>Measurement and reporting</h3>
+            <p>Tools that help authorized businesses retrieve, organize, and use their own operational and advertising data.</p>
+          </article>
+        </div>
+      </section>
+
+      <section aria-labelledby="amazon-title">
+        <h2 id="amazon-title">Amazon API integrations</h2>
+        <p class="integration-copy">
+          ConnectedAccount provides separate Amazon Selling Partner API and Amazon Ads API integrations. Customers connect their
+          own Amazon accounts through Login with Amazon and may revoke access at any time. Credentials are encrypted,
+          account access is tenant-scoped, and Amazon data is used only to perform actions requested by authorized users.
+        </p>
+      </section>
+    </main>
+
+    <footer>
+      <div class="footer-inner">
+        <span>&copy; 2026 ConnectedAccount</span>
+        <div class="footer-links">
+          <a href="https://example.com/">Main website</a>
+          <a href="/privacy">Privacy policy</a>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

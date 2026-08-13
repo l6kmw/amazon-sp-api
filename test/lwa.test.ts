@@ -79,6 +79,122 @@ test("deduplicates concurrent LWA exchanges for the same tenant and seller", asy
   assert.deepEqual(await Promise.all(requests), Array(10).fill("shared-access"));
 });
 
+test("aborting one LWA waiter does not cancel or detach the shared exchange", async () => {
+  let fetchCalls = 0;
+  let exchangeSignal: AbortSignal | null | undefined;
+  let releaseFetch!: () => void;
+  const fetchGate = new Promise<void>((resolve) => { releaseFetch = resolve; });
+  const provider = new LwaAccessTokenProvider({
+    clientId: "client-id",
+    clientSecret: "client-secret",
+    refreshTokens: { async getRefreshToken() { return "refresh-token"; } },
+    fetchImpl: (async (_input, init) => {
+      fetchCalls += 1;
+      exchangeSignal = init?.signal;
+      await fetchGate;
+      return new Response(JSON.stringify({ access_token: "shared-access", expires_in: 3600 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch,
+  });
+  const controller = new AbortController();
+  const reason = new DOMException("request budget exceeded", "TimeoutError");
+
+  const cancelledWaiter = provider.getAccessToken(
+    "A1SELLER",
+    "user-1",
+    false,
+    controller.signal,
+  );
+  const survivingWaiter = provider.getAccessToken("A1SELLER", "user-1");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fetchCalls, 1);
+
+  const rejected = assert.rejects(cancelledWaiter, (error) => error === reason);
+  controller.abort(reason);
+  await rejected;
+  const lateWaiter = provider.getAccessToken("A1SELLER", "user-1");
+  let survivingWaiterSettled = false;
+  void survivingWaiter.then(
+    () => { survivingWaiterSettled = true; },
+    () => { survivingWaiterSettled = true; },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(survivingWaiterSettled, false);
+  assert.equal(fetchCalls, 1);
+  assert.equal(exchangeSignal?.aborted, false);
+
+  releaseFetch();
+  assert.equal(await survivingWaiter, "shared-access");
+  assert.equal(await lateWaiter, "shared-access");
+  assert.equal(fetchCalls, 1);
+  assert.equal(await provider.getAccessToken("A1SELLER", "user-1"), "shared-access");
+  assert.equal(fetchCalls, 1);
+});
+
+test("aborting one token-recovery waiter preserves the shared replacement exchange", async () => {
+  let fetchCalls = 0;
+  let releaseRecovery!: () => void;
+  const recoveryGate = new Promise<void>((resolve) => { releaseRecovery = resolve; });
+  const provider = new LwaAccessTokenProvider({
+    clientId: "client-id",
+    clientSecret: "client-secret",
+    refreshTokens: { async getRefreshToken() { return "refresh-token"; } },
+    fetchImpl: (async () => {
+      fetchCalls += 1;
+      if (fetchCalls === 2) await recoveryGate;
+      return new Response(JSON.stringify({
+        access_token: fetchCalls === 1 ? "rejected-access" : "replacement-access",
+        expires_in: 3600,
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch,
+  });
+  assert.equal(
+    await provider.getAccessToken("A1SELLER", "user-1"),
+    "rejected-access",
+  );
+  const controller = new AbortController();
+  const reason = new DOMException("request budget exceeded", "TimeoutError");
+  const cancelledWaiter = provider.recoverAccessToken(
+    "A1SELLER",
+    "user-1",
+    "rejected-access",
+    controller.signal,
+  );
+  const survivingWaiter = provider.recoverAccessToken(
+    "A1SELLER",
+    "user-1",
+    "rejected-access",
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fetchCalls, 2);
+
+  const rejected = assert.rejects(cancelledWaiter, (error) => error === reason);
+  controller.abort(reason);
+  await rejected;
+  const lateWaiter = provider.recoverAccessToken(
+    "A1SELLER",
+    "user-1",
+    "rejected-access",
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fetchCalls, 2);
+
+  releaseRecovery();
+  assert.equal(await survivingWaiter, "replacement-access");
+  assert.equal(await lateWaiter, "replacement-access");
+  assert.equal(fetchCalls, 2);
+  assert.equal(
+    await provider.getAccessToken("A1SELLER", "user-1"),
+    "replacement-access",
+  );
+  assert.equal(fetchCalls, 2);
+});
+
 test("retries after a shared LWA exchange fails", async () => {
   let calls = 0;
   const provider = new LwaAccessTokenProvider({

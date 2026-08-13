@@ -2,6 +2,10 @@
 
 这是一个根目录单包、单进程、单端口的 Amazon SP-API 服务。OAuth 授权、MCP 工具、ConnectedAccount Connected Account、PostgreSQL/Redis 协调和健康检查都由同一个 TypeScript 应用提供，容器内只监听 `8789`。
 
+管理控制台的“Amazon 连接”页面统一展示 SP-API 与独立 `amazon-ads-mcp` Provider。Ads 数据由 SP 后端在管理员 Session、CSRF 和审计之后，通过固定回环地址代理；浏览器不会读取 Ads Store、Refresh Token 或 OAuth state。两类 Provider 的 OAuth、Credential、Grant/Binding、JWT audience 和 MCP 进程保持独立。
+
+管理入口支持统一 OA 的标准 OIDC Authorization Code + PKCE 登录。`admin.oa` 启用后，本地管理员密码入口关闭；只有配置中精确匹配的 OA `issuer + sub` 会映射为固定 `tenant-1` 管理员。OIDC state、nonce 和 code verifier 仅存在于 10 分钟有效的加密 HttpOnly 流程 Cookie，成功回调后继续使用原有 HttpOnly/Strict 管理 Session、CSRF 与审计。未配置 `admin.oa` 时保留原密码登录，作为显式配置级兼容和回滚模式。
+
 ## 架构
 
 ```text
@@ -12,6 +16,7 @@
           ▼
   dist/server.js（单一 Node 进程）
     ├─ /oauth/amazon/*
+    ├─ /api/v1/admin/oa/*
     ├─ /mcp
     ├─ /.well-known/connected-account
     ├─ /connected-account/v1/*
@@ -81,11 +86,12 @@ storage:
 - OAuth 回调由 `amazon.publicOrigin` 固定推导为 `/oauth/amazon/callback`，推导结果必须与 Amazon Portal 完全一致。
 - `amazon.credentialKeys` 是唯一加密密钥配置；旧密钥可按原值迁移为 `keyId: k0`，无需重加密 Token。
 - MCP 接受本服务本地验签的 ConnectedAccount Employee JWT，以及安全管理控制面数据库中 active Agent 的独立 `oat_*` Test Agent Token；不访问外部身份服务。未配置对应 verifier/安全管理控制面时，该凭据类型失败关闭。
-- Listings 和其他 Seller 非受限只读工具固定注册；限流为每租户 120 次/分钟、8 并发，连接/区域缓存为 30 秒/24 小时，不接受 YAML 覆盖。
+- Listings 和其他 Seller 非受限只读工具固定注册；Provider 不对 MCP 入口实施请求/并发限流，也不根据 Amazon usage-plan Header 本地排队。连接/区域缓存固定为 30 秒/24 小时，不接受 YAML 覆盖；Amazon 返回 429 时仍映射为 `rate_limited` 并按幂等边界执行有界退避重试。
 - 文件存储保持旧 `tokens.json`、`states.json`、`intents.json` 及加密 envelope 格式。
 - PostgreSQL 保持 `amazon_sp_api` Schema、表、索引及 credential revision 语义。
 - 配置 PostgreSQL/Redis 时，全进程分别只创建一个 Pool/Client，并注入全部消费者。
 - 启用 ConnectedAccount 必须同时使用 PostgreSQL、Redis、密钥环、HTTPS Origin 和 JWT 密钥。
+- 启用统一 OA 必须配置 PostgreSQL、`admin.sessionSecretFile` 和 `admin.oa`。OA Client Secret 只从 `0600` 文件读取；回调固定为 `amazon.publicOrigin + /api/v1/admin/oa/callback`。
 
 文件迁移到 PostgreSQL：
 
@@ -108,6 +114,8 @@ AMAZON_CONFIG_FILE=./config.yaml bun run storage:rotate-key -- --apply --batch=1
 | `/oauth/amazon/start` | 打开授权同意页 |
 | `/oauth/amazon/renew` | 打开 Manage Your Apps 续期入口 |
 | `/oauth/amazon/callback` | Amazon Portal 固定回调 |
+| `/api/v1/admin/oa/login` | 创建 OA OIDC PKCE 登录并跳转到 OA |
+| `/api/v1/admin/oa/callback` | 校验 OA 回调并签发本地管理 Session |
 | `/amazon/api/config` | 对接方使用的脱敏 MCP 与 Provider 元数据 |
 | `/amazon/api/status` | 对接方使用的脱敏总体 readiness |
 | `/mcp` | Streamable HTTP MCP |

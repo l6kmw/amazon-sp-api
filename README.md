@@ -1,6 +1,7 @@
-# Amazon SP-API Service
+# Amazon SP-API MCP（单用户版）
 
-这是一个根目录单包、单进程、单端口的 Amazon SP-API 服务。OAuth 授权、MCP 工具、ConnectedAccount Connected Account、PostgreSQL/Redis 协调和健康检查都由同一个 TypeScript 应用提供，容器内只监听 `8789`。
+这是一个单用户本地 Amazon SP-API MCP 服务：单进程、单端口，所有状态存于一个本地目录。
+不需要 PostgreSQL、Redis 或任何外部身份系统，MCP 不做认证（服务只应监听回环地址）。
 
 管理控制台的“Amazon 连接”页面统一展示 SP-API 与独立 `amazon-ads-mcp` Provider。Ads 数据由 SP 后端在管理员 Session、CSRF 和审计之后，通过固定回环地址代理；浏览器不会读取 Ads Store、Refresh Token 或 OAuth state。两类 Provider 的 OAuth、Credential、Grant/Binding、JWT audience 和 MCP 进程保持独立。
 
@@ -9,7 +10,7 @@
 ## 架构
 
 ```text
-浏览器 / MCP / ConnectedAccount
+浏览器 / MCP
           │ HTTPS
         Nginx
           │ 127.0.0.1:8789
@@ -19,12 +20,11 @@
     ├─ /api/v1/admin/oa/*
     ├─ /mcp
     ├─ /.well-known/connected-account
-    ├─ /connected-account/v1/*
+    ├─ /api/v1/accounts/*
     ├─ /healthz、/readyz
     └─ /internal/metrics
           │
           ├─ 文件模式：tokens.json / states.json / intents.json / connected-account.sqlite
-          └─ 生产模式：一个 PostgreSQL Pool + 一个 Redis Client
 ```
 
 旧 `8788` 监听、`/internal/amazon/*`、`AMAZON_OAUTH_INTERNAL_URL`、`AMAZON_INTERNAL_SECRET` 和双服务配置均已删除。旧内部路径始终返回 404；Amazon Portal 的公网回调仍是 `/oauth/amazon/callback`。
@@ -33,7 +33,7 @@
 
 - Node.js `>=22.13.0`（该版本起 [`node:sqlite`](https://nodejs.org/download/release/latest-jod/docs/api/sqlite.html) 不再需要启动标志）
 - Bun `1.3.6`
-- 可选：Docker/Compose、PostgreSQL、Redis
+- 可选：Docker/Compose
 
 应用最终运行在 Node.js 上；Bun 只负责依赖安装和脚本执行。生产镜像不包含 Bun。
 
@@ -85,121 +85,54 @@ storage:
 - 服务内部端口固定为 `8789`，不接受 YAML 配置；宿主端口使用 Compose 的 `AMAZON_PORT` 映射。
 - OAuth 回调由 `amazon.publicOrigin` 固定推导为 `/oauth/amazon/callback`，推导结果必须与 Amazon Portal 完全一致。
 - `amazon.credentialKeys` 是唯一加密密钥配置；旧密钥可按原值迁移为 `keyId: k0`，无需重加密 Token。
-- MCP 接受本服务本地验签的 ConnectedAccount Employee JWT，以及安全管理控制面数据库中 active Agent 的独立 `oat_*` Test Agent Token；不访问外部身份服务。未配置对应 verifier/安全管理控制面时，该凭据类型失败关闭。
+- MCP 不做认证：服务只应监听回环地址，所有调用都归属固定的本地 owner。
 - Listings 和其他 Seller 非受限只读工具固定注册；Provider 不对 MCP 入口实施请求/并发限流，也不根据 Amazon usage-plan Header 本地排队。连接/区域缓存固定为 30 秒/24 小时，不接受 YAML 覆盖；Amazon 返回 429 时仍映射为 `rate_limited` 并按幂等边界执行有界退避重试。
 - 文件存储保持旧 `tokens.json`、`states.json`、`intents.json` 及加密 envelope 格式。
-- PostgreSQL 保持 `amazon_sp_api` Schema、表、索引及 credential revision 语义。
-- 配置 PostgreSQL/Redis 时，全进程分别只创建一个 Pool/Client，并注入全部消费者。
-- 启用 ConnectedAccount 必须同时使用 PostgreSQL、Redis、密钥环、HTTPS Origin 和 JWT 密钥。
-- 启用统一 OA 必须配置 PostgreSQL、`admin.sessionSecretFile` 和 `admin.oa`。OA Client Secret 只从 `0600` 文件读取；回调固定为 `amazon.publicOrigin + /api/v1/admin/oa/callback`。
 
-文件迁移到 PostgreSQL：
+## 本地部署
 
-```bash
-AMAZON_CONFIG_FILE=./config.yaml bun run storage:migrate
-```
+### 1. 取得 Amazon LWA 凭证
 
-密钥轮换先 dry-run，再显式应用：
+在 [Seller Central](https://sellercentral.amazon.com/) 注册 SP-API 应用，拿到 LWA Client ID 与
+Client Secret，并登记回调地址为 `<amazon.publicOrigin>/oauth/amazon/callback`。
+
+### 2. 生成加密密钥
 
 ```bash
-AMAZON_CONFIG_FILE=./config.yaml bun run storage:rotate-key
-AMAZON_CONFIG_FILE=./config.yaml bun run storage:rotate-key -- --apply --batch=100
+cp config.example.yaml config.yaml
+chmod 600 config.yaml
+openssl rand -base64 32   # 填入 amazon.credentialKeys.keys[0].secret
 ```
 
-## 接入你自己的身份提供方
-
-本服务不绑定任何特定平台。它对上游的要求只有一条：**用 HS256 签发短期 JWT**。任何能签发
-这类 Token 的系统都可以驱动它，包括 Keycloak、Auth0、自建签发服务或你自己的应用后端。
-
-协议定义见 [Connected Account Protocol v1](https://github.com/l6kmw/build-connected-account-mcp/blob/main/references/connected-account-protocol-v1.md)。
-
-### 本服务的配置位置
-
-```yaml
-connectedAccount:
-  enabled: true
-  audience: your-account-service          # 必须出现在 JWT 的 aud 中
-  allowedOrigins:                         # 允许发起授权流程的前端 Origin（精确匹配）
-    - "https://your-console.example.com"
-  jwtKeys:                                # 信任列表；轮换期可同时保留多个 kid
-    - kid: "provider-v1"
-      issuer: "https://your-idp.example.com/prod"   # 必须与 JWT 的 iss 精确相等
-      secretFile: "/run/secrets/connected-account-jwt-v1"
-```
-
-`secret` 与 `secretFile` 二选一，密钥至少 32 字节。启用 `connectedAccount` 必须同时配置
-`storage.postgres` 与 `storage.redis`。
-
-### 服务发现
-
-```http
-GET /.well-known/connected-account
-```
-
-返回 `protocolVersion`、`providerKey`、`displayName`、`authorizationFlow`、`capabilities`
-与 `runtime`（规范账号列表工具名与账号参数名）。此端点公开，不需要认证。
-
-### JWT 契约
-
-Header 必须为 `{"alg":"HS256","typ":"JWT","kid":"<你的 key id>"}`，Payload：
-
-| Claim | 要求 |
-| --- | --- |
-| `iss` | 必须与服务端为该 `kid` 配置的 issuer **精确相等** |
-| `sub` | 稳定员工标识；`sub` 相同但 `iss` 不同视为不同员工 |
-| `aud` | 字符串或数组，必须包含配置的 audience |
-| `scope` | 空格分隔，至少包含接口要求的一个 Scope |
-| `jti` | 必填非空，唯一 |
-| `iat` / `nbf` / `exp` | 有效时间戳；`exp - iat` 必须 **> 0 且 ≤ 300 秒** |
-
-校验顺序、允许 30 秒时钟偏差、算法固定 HS256（拒绝 `none` 与算法协商）等细节以协议文档为准。
-
-> **注意**：`sub` 是标准 JWT 字段。不需要把员工 ID 放进自定义 claim，也不存在“平台专有字段”。
-
-### Scope
-
-| Scope | 用途 |
-| --- | --- |
-| `config:check` | 检查 Provider JWT 配置与身份 |
-| `mcp:catalog` | 读取 MCP 能力目录 |
-| `mcp:invoke` | 调用 MCP 业务工具 |
-| `connected_accounts:manage` | 授权、连接、绑定、备注、解绑与断开 |
-
-### 账号生命周期 API
-
-```http
-GET  /connected-account/v1/auth/check
-GET  /connected-account/v1/accounts
-POST /connected-account/v1/accounts/refresh
-POST /connected-account/v1/accounts/lookup
-POST /connected-account/v1/authorization-attempts
-GET  /connected-account/v1/authorization-attempts/{attemptId}
-POST /connected-account/v1/account-bindings
-PUT  /connected-account/v1/account-bindings/{connectionId}/remark
-DELETE /connected-account/v1/account-bindings/{connectionId}
-DELETE /connected-account/v1/connections/{connectionId}
-```
-
-全部使用 `Authorization: Bearer <JWT>` 与 `Content-Type: application/json`。
-
-### 三层身份模型
-
-服务刻意把三件事分开建模，务必理解后再投入生产：
-
-1. **Provider JWT 身份** — 谁在调用（`iss + sub`）。
-2. **Connection Grant** — 某个 `connectionId` 获准使用某个外部账号（按 `issuer` 隔离）。
-3. **Employee Binding** — 该身份在自己的工作区里绑定了哪些连接（按 `issuer + sub` 隔离）。
-
-**解绑员工不等于吊销第三方凭据**；断开 connection 也不能误删其他员工仍在使用的账号。
-
-### 用只读脚本验证接入
+### 3. 启动
 
 ```bash
-export CONNECTED_ACCOUNT_JWT='<短期 JWT>'
-python3 scripts/verify_connected_account_mcp.py --base-url https://your-host
+npm ci
+npm run build
+AMAZON_CONFIG_FILE=$PWD/config.yaml npm start
 ```
 
-不设置 JWT 时只检查公开发现清单与 MCP 健康端点。脚本为只读，不会调用授权、绑定、解绑或任何业务写接口。
+服务监听 `server.host:server.port`（默认 `127.0.0.1:8789`），数据写入 `storage.dataDirectory`。
+
+### 4. 连接 Amazon 账号
+
+```bash
+# 发起授权，返回 authorizationUrl，在浏览器打开
+curl -s -X POST http://127.0.0.1:8789/api/v1/accounts/authorization-attempts | jq .
+
+# 查询进度
+curl -s http://127.0.0.1:8789/api/v1/accounts/authorization-attempts/<attemptId> | jq .
+
+# 已连接账号
+curl -s http://127.0.0.1:8789/api/v1/accounts | jq .
+```
+
+MCP 端点：`POST http://127.0.0.1:8789/mcp`，**无需 Authorization 头**。
+
+### 安全边界
+
+MCP 与账号管理接口都不做认证，因此服务只应绑定回环地址。若必须对外暴露，
+请在前面放一层带认证的反向代理。
 
 ## HTTP 契约
 
@@ -214,10 +147,9 @@ python3 scripts/verify_connected_account_mcp.py --base-url https://your-host
 | `/amazon/api/config` | 对接方使用的脱敏 MCP 与 Provider 元数据 |
 | `/amazon/api/status` | 对接方使用的脱敏总体 readiness |
 | `/mcp` | Streamable HTTP MCP |
-| `/.well-known/connected-account` | ConnectedAccount 能力发现 |
-| `/connected-account/v1/*` | ConnectedAccount 账户生命周期 |
+| `/api/v1/accounts/*` | 账号列表、授权尝试与断开（无需认证） |
 | `/healthz` | 进程 liveness，始终反映进程是否可服务 HTTP |
-| `/readyz` | 仅回环访问的 LWA、Token Store、加密密钥及可选 PostgreSQL/Redis 详细 readiness |
+| `/readyz` | LWA、Token Store 与加密密钥 readiness |
 | `/internal/metrics` | 回环 Prometheus 指标 |
 
 `/healthz` 返回 `status`、`version`、`tools`、`lwaConfigured`。依赖异常不改变 liveness；回环 `/readyz` 在任一必需依赖失败时返回 503 并包含逐项检查。公网只暴露 `/amazon/api/config` 和 `/amazon/api/status`，`/amazon/` 不提供前端页面，`/readyz` 继续返回 404。

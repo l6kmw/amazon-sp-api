@@ -214,9 +214,10 @@ const listingItemSchema = z.object({
 }).strict();
 
 export const identityOutputSchema = z.object({
-  identity_type: z.enum(["employee_jwt", "test_agent_token"]),
+  // Single-user build: the caller is always the fixed local owner.
+  identity_type: z.literal("local_owner"),
   identity_id: z.string().min(1),
-  role: z.enum(["employee", "test_agent"]),
+  role: z.literal("owner"),
 }).strict();
 
 export const listAccountsOutputSchema = z.object({

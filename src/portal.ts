@@ -1,17 +1,11 @@
 import type { Express, Response } from "express";
 
-import { CONNECTED_ACCOUNT_PROTOCOL_SCOPES } from "./connected-account.js";
-
 export const PUBLIC_MCP_PATH = "/mcp/amazon";
 
 export interface AmazonPortalOptions {
   publicOrigin: string;
   version: string;
   toolCount: number;
-  connectedAccountEnabled: boolean;
-  connectedAccountAudience?: string;
-  connectedAccountOrigins: string[];
-  connectedAccountJwtKeys: Array<{ kid: string; issuer: string }>;
 }
 
 function setPortalSecurityHeaders(response: Response): void {
@@ -31,8 +25,6 @@ function setPortalSecurityHeaders(response: Response): void {
 }
 
 export function publicAmazonPortalConfig(options: AmazonPortalOptions) {
-  const providerBaseUrl = new URL("/connected-account/v1/", options.publicOrigin).toString();
-  const connectedAccountOrigin = options.connectedAccountOrigins[0];
   return {
     service: {
       name: "Amazon SP-API",
@@ -42,28 +34,20 @@ export function publicAmazonPortalConfig(options: AmazonPortalOptions) {
     mcp: {
       transport: "streamable-http",
       url: new URL(PUBLIC_MCP_PATH, options.publicOrigin).toString(),
-      headerName: "Authorization",
-      headerTemplate: "Bearer <CONNECTED_ACCOUNT_JWT>",
+      // Single-user build: MCP is unauthenticated and binds loopback only.
+      authenticated: false,
     },
     oauth: {
       loginUrl: new URL("/oauth/amazon/login", options.publicOrigin).toString(),
       redirectUrl: new URL("/oauth/amazon/callback", options.publicOrigin).toString(),
       sellerCentralManageUrl: "https://sellercentral.amazon.com/apps/manage",
     },
-    provider: {
-      enabled: options.connectedAccountEnabled,
-      discoveryUrl: new URL(
-        "/.well-known/connected-account",
+    accounts: {
+      listUrl: new URL("/api/v1/accounts", options.publicOrigin).toString(),
+      authorizationAttemptsUrl: new URL(
+        "/api/v1/accounts/authorization-attempts",
         options.publicOrigin,
       ).toString(),
-      apiBaseUrl: providerBaseUrl,
-      authCheckUrl: new URL("auth/check", providerBaseUrl).toString(),
-      audience: options.connectedAccountAudience ?? "",
-      jwtKeys: options.connectedAccountJwtKeys,
-      requiredScopes: [...CONNECTED_ACCOUNT_PROTOCOL_SCOPES],
-      employeeConsoleUrl: connectedAccountOrigin
-        ? new URL("/employees", connectedAccountOrigin).toString()
-        : "",
     },
   };
 }

@@ -5,11 +5,7 @@
   "type": "module",
   "packageManager": "bun@1.3.6",
   "scripts": {
-    "build": "npm --prefix web/admin run build && tsc -p tsconfig.build.json",
-    "web:build": "npm --prefix web/admin run build",
-    "test:web-browser": "npm --prefix web/admin run build && node scripts/verify-admin-browser.mjs",
-    "test:web-security": "npm --prefix web/admin run build && node scripts/verify-admin-security.mjs",
-    "test:real-staging": "bun run build && node scripts/verify-real-staging.mjs",
+    "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
     "test": "bun run test:unit && bun run test:verify-script",
@@ -18,11 +14,6 @@
     "test:verify-script": "python3 -m unittest scripts/test_verify_connected_account_mcp.py -v",
     "verify:connected-account-readonly": "python3 scripts/verify_connected_account_mcp.py",
     "generate:sp-api": "bun scripts/generate-sp-api-registry.ts",
-    "storage:migrate": "tsx scripts/migrate-storage.ts",
-    "postgres:migrate": "node dist/migrate-postgres.js",
-    "postgres:backfill": "node dist/backfill-postgres.js",
-    "admin:init": "node dist/init-admin.js",
-    "storage:rotate-key": "tsx scripts/rotate-encryption-key.ts",
     "test:docker-image": "node docker/verify-runtime-image.mjs",
     "ci-gate": "bash scripts/ci-gate.sh",
     "typecheck": "tsc -p tsconfig.json --noEmit"
@@ -35,15 +26,12 @@
     "express": "5.1.0",
     "graphql": "16.11.0",
     "openid-client": "6.8.4",
-    "pg": "8.22.0",
-    "redis": "6.1.0",
     "yaml": "2.9.0",
     "zod": "3.25.76"
   },
   "devDependencies": {
     "@types/express": "5.0.3",
     "@types/node": "24.3.0",
-    "@types/pg": "8.20.0",
     "tsx": "4.20.5",
     "typescript": "7.0.2"
   }

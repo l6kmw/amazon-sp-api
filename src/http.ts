@@ -7,7 +7,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express, { type NextFunction, type Request, type Response } from "express";
 
-import { registerAdminAccountRoutes } from "./admin-accounts.js";/**
+import { LOCAL_ACCOUNT_PRINCIPAL, LOCAL_PRINCIPAL } from "./local-identity.js";/**
  * Operator details for the public legal pages (company profile + privacy policy).
  * These pages are shown to Amazon during seller-app review, so a self-hosted
  * deployment must present its own entity. Unset values stay as literal
@@ -47,13 +47,6 @@ function renderLegalPage(templatePath: string, operator?: OperatorProfile): stri
   return html.replace(/\{\{([A-Z_]+)\}\}/g, (match, key: string) => values[key] ?? match);
 }
 
-import { registerAdminAdsRoutes, type AdminAdsService } from "./admin-ads.js";
-import { registerAdminAgentRoutes, type AdminAgentService } from "./admin-agents.js";
-import { registerAdminAuditRoutes, type AdminAuditService } from "./admin-audit.js";
-import { registerAdminBindingRoutes } from "./admin-bindings.js";
-import { registerAdminDashboardRoutes, type AdminDashboardDeps } from "./admin-dashboard.js";
-import { registerAdminOaRoutes, type AdminOaOptions } from "./admin-oa.js";
-import { registerAdminSessionRoutes, type AdminSessionManager } from "./admin-session.js";
 import type { AmazonPrincipal } from "./identity.js";
 import {
   ConnectedAccountError,
@@ -73,7 +66,6 @@ import {
 } from "./mcp-argument-logger.js";
 import { isLoopbackAddress, mcpMetrics } from "./metrics.js";
 import { PUBLIC_MCP_PATH } from "./portal.js";
-import type { PostgresConnectedAccountStore } from "./postgres-connected-accounts.js";
 import {
   registerAmazonPortal,
   type AmazonPortalOptions,
@@ -206,13 +198,6 @@ export function createAmazonMcpHttpApp(options: {
   argumentLogger?: Pick<McpArgumentLogger, "log">;
   connectedAccountManifest?: typeof CONNECTED_ACCOUNT_DISCOVERY_MANIFEST;
   connectedAccountService?: ConnectedAccountService;
-  adminSessions?: AdminSessionManager;
-  adminAgents?: AdminAgentService;
-  adminAudits?: AdminAuditService;
-  adminBindingAccounts?: PostgresConnectedAccountStore;
-  adminDashboard?: AdminDashboardDeps;
-  adminAds?: AdminAdsService;
-  adminOa?: AdminOaOptions;
   portal?: AmazonPortalOptions;
   operator?: OperatorProfile;
 }) {
@@ -307,212 +292,59 @@ export function createAmazonMcpHttpApp(options: {
     }));
   }
 
-  if (options.adminSessions && options.adminAudits) {
-    registerAdminSessionRoutes(app, options.adminSessions, options.adminAudits);
-    if (options.adminOa) {
-      registerAdminOaRoutes(app, options.adminSessions, options.adminAudits, options.adminOa);
-    }
-    registerAdminAuditRoutes(app, options.adminSessions, options.adminAudits, options.adminAgents);
-    if (options.adminAgents) {
-      registerAdminAgentRoutes(app, options.adminSessions, options.adminAgents, options.adminAudits);
-      if (options.adminBindingAccounts) {
-        registerAdminBindingRoutes(
-          app,
-          options.adminSessions,
-          options.adminAgents,
-          options.adminAudits,
-          options.adminBindingAccounts,
-        );
-      }
-      if (options.adminDashboard) {
-        registerAdminDashboardRoutes(
-          app,
-          options.adminSessions,
-          options.adminAgents,
-          options.adminAudits,
-          options.adminDashboard,
-        );
-        registerAdminAccountRoutes(
-          app,
-          options.adminSessions,
-          options.adminAgents,
-          options.adminAudits,
-          options.adminDashboard.pool,
-        );
-      }
-      if (options.adminAds) {
-        registerAdminAdsRoutes(
-          app,
-          options.adminSessions,
-          options.adminAgents,
-          options.adminAudits,
-          options.adminAds,
-        );
-      }
-    }
-  }
 
-  if (options.connectedAccountManifest) {
-    app.get("/.well-known/connected-account", (_request, response) => {
+  // Single-user: minimal account API. There is no Connected Account Protocol,
+  // no JWT, and no tenant scoping — the service binds loopback only.
+  if (options.connectedAccountService) {
+    app.get("/api/v1/accounts", async (_request, response) => {
       response.setHeader("cache-control", "no-store");
-      response.json(options.connectedAccountManifest);
+      try {
+        const accounts = await options.connectedAccountService!.listAccounts(LOCAL_ACCOUNT_PRINCIPAL);
+        response.json({ items: accounts });
+      } catch (error) {
+        connectedAccountError(response, error);
+      }
     });
 
-    app.get("/connected-account/v1/auth/check", async (request, response) => {
+    app.post("/api/v1/accounts/authorization-attempts", async (_request, response) => {
       response.setHeader("cache-control", "no-store");
-      const principal = options.authenticate
-        ? await options.authenticate(bearerToken(request))
-        : null;
-      if (!principal || principal.authType !== "employee_jwt") {
-        response.setHeader("www-authenticate", "Bearer");
-        response.status(401).json({ error: { code: "unauthorized", message: "Unauthorized" } });
-        return;
-      }
-      if (!CONNECTED_ACCOUNT_PROTOCOL_SCOPES.some((scope) => principal.scopes.has(scope))) {
-        response.status(403).json({ error: { code: "forbidden", message: "Required scope is missing" } });
-        return;
-      }
-      response.json({
-        authenticated: true,
-        employeeId: principal.employeeId,
-        issuer: principal.issuer,
-        kid: principal.kid,
-        expiresAt: principal.expiresAt,
-      });
-    });
-
-    if (options.connectedAccountService) {
-      const manage = (
-        handler: (
-          request: Request,
-          response: Response,
-          principal: ConnectedAccountPrincipal,
-        ) => Promise<void> | void,
-      ) => async (request: Request, response: Response) => {
-        response.setHeader("cache-control", "no-store");
-        const principal = options.authenticate
-          ? await options.authenticate(bearerToken(request))
-          : null;
-        if (!principal || principal.authType !== "employee_jwt") {
-          response.setHeader("www-authenticate", "Bearer");
-          response.status(401).json({ error: { code: "unauthorized", message: "Unauthorized" } });
-          return;
-        }
-        if (!hasConnectedAccountScope(principal, "connected_accounts:manage")) {
-          response.status(403).json({
-            error: { code: "forbidden", message: "Required scope is missing" },
-          });
-          return;
-        }
-        try {
-          await handler(request, response, principal);
-        } catch (error) {
-          connectedAccountError(response, error);
-        }
-      };
-
-      app.get("/connected-account/v1/accounts", manage(async (_request, response, principal) => {
-        response.json({ items: await options.connectedAccountService!.listAccounts(principal) });
-      }));
-
-      app.post("/connected-account/v1/accounts/refresh", manage(async (request, response, principal) => {
-        if (request.body !== undefined) objectBody(request, []);
-        response.json({ items: await options.connectedAccountService!.refreshAccounts(principal) });
-      }));
-
-      app.post("/connected-account/v1/accounts/lookup", manage(async (request, response, principal) => {
-        const body = objectBody(request, ["connectionIds"]);
-        if (
-          !Array.isArray(body.connectionIds) ||
-          body.connectionIds.length > 100 ||
-          body.connectionIds.some((value) => typeof value !== "string")
-        ) {
-          throw new ConnectedAccountError(
-            400,
-            "invalid_request",
-            "connectionIds must be an array of at most 100 strings",
-          );
-        }
-        const ids = [...new Set(body.connectionIds.map(connectionId))];
-        response.json({ items: await options.connectedAccountService!.lookupAccounts(principal, ids) });
-      }));
-
-      app.post("/connected-account/v1/authorization-attempts", manage(async (
-        request,
-        response,
-        principal,
-      ) => {
-        if (request.body !== undefined) objectBody(request, []);
-        const attempt = await options.connectedAccountService!.createAuthorizationAttempt(principal);
+      try {
+        const attempt = await options.connectedAccountService!.createAuthorizationAttempt(
+          LOCAL_ACCOUNT_PRINCIPAL,
+        );
         response.status(201).json(attempt);
-      }));
+      } catch (error) {
+        connectedAccountError(response, error);
+      }
+    });
 
-      app.get("/connected-account/v1/authorization-attempts/:attemptId", manage(async (
-        request,
-        response,
-        principal,
-      ) => {
+    app.get("/api/v1/accounts/authorization-attempts/:attemptId", async (request, response) => {
+      response.setHeader("cache-control", "no-store");
+      try {
         const attempt = await options.connectedAccountService!.getAuthorizationAttempt(
-          principal,
-          attemptId(request.params.attemptId),
+          LOCAL_ACCOUNT_PRINCIPAL,
+          String(request.params.attemptId ?? ""),
         );
         response.json(attempt);
-      }));
+      } catch (error) {
+        connectedAccountError(response, error);
+      }
+    });
 
-      app.post("/connected-account/v1/account-bindings", manage(async (request, response, principal) => {
-        const body = objectBody(request, ["connectionId"]);
-        const result = await options.connectedAccountService!.bindAccount(
-          principal,
-          connectionId(body.connectionId),
-        );
-        response.status(result.created ? 201 : 200).json(result.account);
-      }));
-
-      app.put("/connected-account/v1/account-bindings/:connectionId/remark", manage(async (
-        request,
-        response,
-        principal,
-      ) => {
-        const body = objectBody(request, ["remark"]);
-        if (typeof body.remark !== "string" || [...body.remark].length > 80) {
-          throw new ConnectedAccountError(
-            400,
-            "invalid_request",
-            "remark must contain at most 80 Unicode characters",
-          );
-        }
-        response.json(await options.connectedAccountService!.updateRemark(
-          principal,
-          connectionId(request.params.connectionId),
-          body.remark,
-        ));
-      }));
-
-      app.delete("/connected-account/v1/account-bindings/:connectionId", manage(async (
-        request,
-        response,
-        principal,
-      ) => {
-        await options.connectedAccountService!.unbindAccount(
-          principal,
-          connectionId(request.params.connectionId),
-        );
-        response.status(204).end();
-      }));
-
-      app.delete("/connected-account/v1/connections/:connectionId", manage(async (
-        request,
-        response,
-        principal,
-      ) => {
+    app.delete("/api/v1/accounts/:connectionId", async (request, response) => {
+      response.setHeader("cache-control", "no-store");
+      try {
         await options.connectedAccountService!.disconnect(
-          principal,
-          connectionId(request.params.connectionId),
+          LOCAL_ACCOUNT_PRINCIPAL,
+          String(request.params.connectionId ?? ""),
         );
         response.status(204).end();
-      }));
-    }
+      } catch (error) {
+        connectedAccountError(response, error);
+      }
+    });
   }
+
 
   app.get("/readyz", async (_request, response) => {
     response.setHeader("cache-control", "no-store");
@@ -530,26 +362,10 @@ export function createAmazonMcpHttpApp(options: {
     response.locals.requestId = requestId;
     response.setHeader("x-request-id", requestId);
     response.setHeader("cache-control", "no-store");
-    const token = bearerToken(request);
-    const principal = options.authenticate
-      ? await options.authenticate(token)
-      : null;
-    if (!principal) {
-      logger.write("warn", "mcp.auth.rejected", {
-        request_id: requestId,
-        error_code: "auth_rejected",
-        result: "rejected",
-      });
-      mcpMetrics.inc("mcp_auth_failures_total", "MCP authentication failures", {
-        error_code: "auth_rejected",
-      });
-      response.setHeader("www-authenticate", "Bearer");
-      response.status(401).json({ error: "unauthorized" });
-      return;
-    }
-    const actorIdHash = logger.hash(
-      principal.authType === "employee_jwt" ? principal.employeeId : principal.agentId,
-    );
+    // Single-user build: the service binds loopback only, so MCP is not
+    // authenticated. Every call runs as the fixed local owner.
+    const principal = LOCAL_PRINCIPAL;
+    const actorIdHash = logger.hash(principal.employeeId);
     if (!hasMcpAccess(principal, request)) {
       logger.write("warn", "mcp.scope.rejected", {
         request_id: requestId,
@@ -696,30 +512,6 @@ export function createAmazonMcpHttpApp(options: {
           result,
           actor_type: actorType,
         });
-        if (toolContext.failureCode && options.adminAudits) {
-          try {
-            await options.adminAudits.record({
-              actorType: principal.authType === "employee_jwt" ? "employee_jwt" : "agent_token",
-              actorId: actorIdHash ?? "unknown",
-              agentRecordId: principal.authType === "test_agent"
-                ? principal.agentRecordId
-                : undefined,
-              action: "mcp.tool.failed",
-              resourceType: "mcp_tool",
-              resourceId: tool,
-              requestId,
-            }, "failed", toolContext.failureCode);
-          } catch {
-            logger.write("error", "mcp.alert.persist_failed", {
-              request_id: requestId,
-              tool,
-              actor_type: actorType,
-              actor_id_hash: actorIdHash,
-              result: "error",
-              error_code: "internal_error",
-            });
-          }
-        }
       }
     }
   });

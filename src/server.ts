@@ -3,33 +3,20 @@ import { chmod, lstat, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Pool, type PoolConfig } from "pg";
-import { createClient } from "redis";
 
-import { PostgresAccountAccessPolicy } from "./account-access-policy.js";
-import { AdminAgentService } from "./admin-agents.js";
-import { LoopbackAdminAdsClient } from "./admin-ads.js";
-import { AdminAuditService } from "./admin-audit.js";
-import { OpenIdAdminOaClient } from "./admin-oa.js";
-import { AdminSessionManager } from "./admin-session.js";
 import { loadConfig, type RuntimeConfig } from "./config.js";
 import { ConnectionService, type AuthorizationIntent } from "./connection-service.js";
 import { AmazonDocumentReader } from "./document-reader.js";
-import { createDevMemoryPool } from "./dev-pool.js";
 import { ConnectedAccountStore } from "./connected-accounts.js";
-import { CONNECTED_ACCOUNT_DISCOVERY_MANIFEST, ConnectedAccountJwtVerifier } from "./connected-account.js";
+import { createLocalAccountAccessPolicy, isLocalLoopback } from "./local-identity.js";
 import { createAmazonMcpHttpApp, type ReadinessResult } from "./http.js";
-import { createAmazonAuthenticator } from "./identity.js";
 import { LwaAccessTokenProvider } from "./lwa.js";
 import { createStructuredLogger } from "./logger.js";
 import { McpArgumentFileLogger } from "./mcp-argument-logger.js";
 import { createAmazonOAuthRouter, type OAuthState } from "./oauth.js";
 import { PUBLIC_MCP_PATH } from "./portal.js";
-import { PostgresConnectedAccountStore } from "./postgres-connected-accounts.js";
-import { PostgresRefreshTokenStore } from "./postgres-token-store.js";
-import { RedisAccessTokenCoordinator } from "./redis-coordinator.js";
-import { FileExpiringStore, RedisExpiringStore } from "./state-store.js";
 import { AmazonSpApiClient } from "./sp-api-client.js";
+import { FileExpiringStore } from "./state-store.js";
 import { SpApiCapabilityTracker } from "./sp-api-operations.js";
 import {
   createTokenKeyringFromConfig,
@@ -61,21 +48,13 @@ export function createRuntimeReadinessCheck(options: {
   lwaConfigured: boolean;
   encryptionKey: string;
   tokenStoreCheck: () => Promise<"ok" | "error">;
-  postgresCheck?: () => Promise<"ok" | "error">;
-  redisCheck?: () => Promise<"ok" | "error">;
 }): () => Promise<ReadinessResult> {
   return async () => {
-    const [tokenStore, postgres, redis] = await Promise.all([
-      options.tokenStoreCheck(),
-      options.postgresCheck?.(),
-      options.redisCheck?.(),
-    ]);
+    const tokenStore = await options.tokenStoreCheck();
     const checks: ReadinessResult["checks"] = {
       lwa: options.lwaConfigured ? "ok" : "error",
       tokenStore,
       encryptionKey: canParseEncryptionKey(options.encryptionKey) ? "ok" : "error",
-      ...(postgres ? { postgres } : {}),
-      ...(redis ? { redis } : {}),
     };
     return {
       status: Object.values(checks).every((result) => result === "ok")
@@ -95,66 +74,25 @@ async function secureDataDirectory(config: RuntimeConfig): Promise<void> {
   await chmod(config.dataDirectory, 0o700);
 }
 
-export function productionPostgresPoolConfig(
-  config: Pick<RuntimeConfig, "databaseUrl" | "postgresPool">,
-): PoolConfig {
-  return {
-    connectionString: config.databaseUrl,
-    min: config.postgresPool.min,
-    max: config.postgresPool.max,
-    idleTimeoutMillis: config.postgresPool.idleTimeoutMs,
-    statement_timeout: 40_000,
-    query_timeout: 45_000,
-    connectionTimeoutMillis: 5_000,
-  };
-}
-
 export async function createRuntime(configFile?: string) {
   const config = await loadConfig(configFile);
   await secureDataDirectory(config);
 
-  const pool = config.databaseUrl
-    ? new Pool(productionPostgresPoolConfig(config))
-    : await createDevMemoryPool();
-  const redis = config.redisUrl ? createClient({ url: config.redisUrl }) : undefined;
   const startupCleanup: Array<() => Promise<unknown> | void> = [];
-  if (pool) startupCleanup.push(() => pool.end());
-  if (redis) {
-    startupCleanup.push(() => redis.isOpen ? redis.close() : undefined);
-  }
   try {
-    redis?.on("error", () => {});
-    if (redis) await redis.connect();
-
   const keyring = createTokenKeyringFromConfig(config.credentialKeyring);
   const currentEncryptionKey = config.credentialKeyring.keys[
     config.credentialKeyring.currentKeyId
   ]!;
-  const connectionStore: ConnectionStore = pool
-    ? new PostgresRefreshTokenStore({
-      pool,
-      encryptionKey: currentEncryptionKey,
-      keyring,
-    })
-    : new EncryptedFileTokenStore({
-      file: config.tokenStoreFile,
-      encryptionKey: currentEncryptionKey,
-      keyring,
-      allowedSellingPartnerIds: config.allowedSellingPartnerIds,
-    });
+  const connectionStore: ConnectionStore = new EncryptedFileTokenStore({
+    file: config.tokenStoreFile,
+    encryptionKey: currentEncryptionKey,
+    keyring,
+    allowedSellingPartnerIds: config.allowedSellingPartnerIds,
+  });
   startupCleanup.push(() => connectionStore.close());
-  const stateStore = redis
-    ? new RedisExpiringStore<OAuthState>({
-      client: redis,
-      namespace: `${config.redisNamespace}:oauth-state`,
-    })
-    : new FileExpiringStore<OAuthState>(config.stateStoreFile);
-  const intentStore = redis
-    ? new RedisExpiringStore<AuthorizationIntent>({
-      client: redis,
-      namespace: `${config.redisNamespace}:oauth-intent`,
-    })
-    : new FileExpiringStore<AuthorizationIntent>(config.intentStoreFile);
+  const stateStore = new FileExpiringStore<OAuthState>(config.stateStoreFile);
+  const intentStore = new FileExpiringStore<AuthorizationIntent>(config.intentStoreFile);
   startupCleanup.push(() => stateStore.close(), () => intentStore.close());
 
   await Promise.all([
@@ -173,16 +111,11 @@ export async function createRuntime(configFile?: string) {
   });
   startupCleanup.push(() => argumentLogger.close());
   await argumentLogger.initialize();
-  const accessTokenCoordinator = redis
-    ? new RedisAccessTokenCoordinator({ client: redis, namespace: config.redisNamespace })
-    : undefined;
-  if (accessTokenCoordinator) startupCleanup.push(() => accessTokenCoordinator.close());
   const accessTokens = new LwaAccessTokenProvider({
     clientId: config.lwaClientId,
     clientSecret: config.lwaClientSecret,
     refreshTokens: connectionStore,
     logger,
-    coordinator: accessTokenCoordinator,
   });
   const spApi = new AmazonSpApiClient({ accessTokens, logger });
   const documentReader = new AmazonDocumentReader({ client: spApi, keyring });
@@ -201,93 +134,27 @@ export async function createRuntime(configFile?: string) {
     store: connectionStore,
     intentStore,
     publicOrigin: config.publicOrigin,
-    allowedConnectedAccountOrigins: [...config.connectedAccountAllowedOrigins, config.publicOrigin],
+    allowedConnectedAccountOrigins: [config.publicOrigin],
     connectionCacheTtlMs: CONNECTION_CACHE_TTL_MS,
     onDisconnect: async (tenantId, sellingPartnerId) => {
       await accessTokens.invalidateAccessToken(sellingPartnerId, tenantId);
       regionCache.delete(tenantId, sellingPartnerId);
     },
   });
-  const connectedAccountService = config.connectedAccountEnabled
-    ? pool
-      ? new PostgresConnectedAccountStore({
-        pool,
-        oauth: connections,
-        authorizationOrigin: config.connectedAccountAllowedOrigins[0]!,
-        adminAuthorizationOrigin: config.publicOrigin,
-        invalidateCredential,
-      })
-      : new ConnectedAccountStore({
-        file: config.connectedAccountDatabaseFile,
-        oauth: connections,
-        authorizationOrigin: config.connectedAccountAllowedOrigins[0]!,
-      })
-    : undefined;
-  if (connectedAccountService) startupCleanup.push(() => Promise.resolve(connectedAccountService.close()));
-
-  const adminControlEnabled = Boolean(config.databaseUrl && config.adminSessionSecret);
-  const adminAgents = adminControlEnabled ? new AdminAgentService(pool) : undefined;
-  const authenticate = createAmazonAuthenticator({
-    connectedAccountVerifier: config.connectedAccountEnabled
-      ? new ConnectedAccountJwtVerifier({
-        audience: config.connectedAccountJwtAudience!,
-        keys: config.connectedAccountJwtKeys,
-      })
-      : undefined,
-    authenticateTestAgent: adminAgents
-      ? (token) => adminAgents.authenticateToken(token)
-      : undefined,
+  // Single-user: accounts live in one local file, bound to the fixed local owner.
+  const connectedAccountService = new ConnectedAccountStore({
+    file: config.connectedAccountDatabaseFile,
+    oauth: connections,
+    authorizationOrigin: config.publicOrigin,
   });
-  const postgresCheck = pool
-    ? async (): Promise<"ok" | "error"> => {
-      try {
-        await pool.query("SELECT 1");
-        return "ok";
-      } catch {
-        return "error";
-      }
-    }
-    : undefined;
-  const redisCheck = redis
-    ? async (): Promise<"ok" | "error"> => {
-      try {
-        return await redis.ping() === "PONG" ? "ok" : "error";
-      } catch {
-        return "error";
-      }
-    }
-    : undefined;
+  startupCleanup.push(() => Promise.resolve(connectedAccountService.close()));
   const readinessCheck = createRuntimeReadinessCheck({
     lwaConfigured: Boolean(config.lwaClientId && config.lwaClientSecret),
     encryptionKey: currentEncryptionKey,
     tokenStoreCheck: () => connectionStore.checkHealth(),
-    postgresCheck,
-    redisCheck,
   });
-  const adminSessions = adminControlEnabled
-    ? new AdminSessionManager({
-      pool,
-      secret: config.adminSessionSecret!,
-      oaIdentity: config.adminOa
-        ? { issuer: config.adminOa.issuer, subject: config.adminOa.subject }
-        : undefined,
-    })
-    : undefined;
-  const adminAudits = pool ? new AdminAuditService(pool) : undefined;
-  const adminBindingAccounts = adminControlEnabled
-    ? connectedAccountService instanceof PostgresConnectedAccountStore
-      ? connectedAccountService
-      : new PostgresConnectedAccountStore({
-        pool,
-        oauth: connections,
-        authorizationOrigin: config.connectedAccountAllowedOrigins[0] || config.publicOrigin,
-        adminAuthorizationOrigin: config.publicOrigin,
-        invalidateCredential,
-      })
-    : undefined;
-  const accountAccessPolicy = pool ? new PostgresAccountAccessPolicy(pool) : undefined;
+  const accountAccessPolicy = createLocalAccountAccessPolicy(connectedAccountService);
   const app = createAmazonMcpHttpApp({
-    authenticate,
     host: config.host,
     allowedHosts: config.allowedHosts,
     createServer: (principal) => createAmazonMcpServer(spApi, {
@@ -304,42 +171,11 @@ export async function createRuntime(configFile?: string) {
     readinessCheck,
     logger,
     argumentLogger,
-    connectedAccountManifest: config.connectedAccountEnabled ? CONNECTED_ACCOUNT_DISCOVERY_MANIFEST : undefined,
     connectedAccountService,
-    adminSessions,
-    adminAgents,
-    adminAudits,
-    adminBindingAccounts,
-    adminDashboard: adminControlEnabled ? {
-      pool,
-      lwaClientId: config.lwaClientId,
-      lwaClientSecret: config.lwaClientSecret,
-      applicationId: config.applicationId,
-      publicOrigin: config.publicOrigin,
-      readinessCheck,
-      toolCount: 30,
-      mcpEndpoint: PUBLIC_MCP_PATH,
-      connectedAccountKeyringConfigured: config.connectedAccountEnabled && config.connectedAccountJwtKeys.length > 0,
-    } : undefined,
-    adminAds: adminControlEnabled ? new LoopbackAdminAdsClient() : undefined,
-    adminOa: config.adminOa ? {
-      publicOrigin: config.publicOrigin,
-      sessionSecret: config.adminSessionSecret!,
-      scope: config.adminOa.scope,
-      client: new OpenIdAdminOaClient({
-        issuer: config.adminOa.issuer,
-        clientId: config.adminOa.clientId,
-        clientSecret: config.adminOa.clientSecret,
-      }),
-    } : undefined,
     portal: {
       publicOrigin: config.publicOrigin,
       version: SERVICE_VERSION,
       toolCount: 30,
-      connectedAccountEnabled: config.connectedAccountEnabled,
-      connectedAccountAudience: config.connectedAccountJwtAudience,
-      connectedAccountOrigins: config.connectedAccountAllowedOrigins,
-      connectedAccountJwtKeys: config.connectedAccountJwtKeys.map(({ kid, issuer }) => ({ kid, issuer })),
     },
     operator: config.operator,
   });
@@ -363,11 +199,8 @@ export async function createRuntime(configFile?: string) {
       connectionStore.close(),
       stateStore.close(),
       intentStore.close(),
-      accessTokenCoordinator?.close(),
       argumentLogger.close(),
     ]);
-    if (redis?.isOpen) await redis.close();
-    if (pool) await pool.end();
   };
     return { app, close, config, connectionStore, connections, intentStore, stateStore };
   } catch (error) {

@@ -15,6 +15,7 @@ import {
 } from "../src/connected-accounts.js";
 import { CONNECTED_ACCOUNT_DISCOVERY_MANIFEST } from "../src/connected-account.js";
 import { createAmazonMcpHttpApp } from "../src/http.js";
+import { LOCAL_ACCOUNT_PRINCIPAL, LOCAL_OWNER } from "../src/local-identity.js";
 import { createAmazonMcpServer } from "../src/tools.js";
 
 const temporaryDirectories: string[] = [];
@@ -366,33 +367,36 @@ test("expires pending authorization attempts without polling OAuth again", async
   }
 });
 
-test("serves the ConnectedAccount lifecycle and exposes only bound accounts through MCP", async () => {
+test("exposes bound accounts over the local API and MCP without authentication", async () => {
   const context = await createStore();
-  const employee = principal("example-issuer-prod", "employee-1");
-  const noManageScope = principal("example-issuer-prod", "employee-1", new Set(["mcp:invoke"]));
+  const owner = principal("local", "local");
+  // Complete a real authorization attempt so the connection id is genuine.
+  const attempt = await context.store.createAuthorizationAttempt(owner);
+  context.completions.set(attempt.attemptId, {
+    sellingPartnerId: "A1SELLER",
+    authorizedAt: "2026-07-21T10:01:00.000Z",
+  });
+  const active = await context.store.getAuthorizationAttempt(owner, attempt.attemptId);
+  const connectionId = active.connection!.connectionId;
+  const bound = context.store.bindAccount(owner, connectionId);
+  assert.equal(bound.created, true);
   const app = createAmazonMcpHttpApp({
     host: "127.0.0.1",
     allowedHosts: ["127.0.0.1", "localhost"],
     version: "0.1.0",
-    connectedAccountManifest: CONNECTED_ACCOUNT_DISCOVERY_MANIFEST,
     connectedAccountService: context.store,
-    authenticate: async (token) => token === "employee-jwt"
-      ? employee
-      : token === "invoke-only-jwt"
-        ? noManageScope
-        : null,
     createServer: (actor) => createAmazonMcpServer(
       { async get() { return {}; } },
       {
         principal: actor,
         accountAccessPolicy: {
-          async listAccounts(principal) {
-            return context.store.listAccounts(principal as ConnectedAccountPrincipal);
+          async listAccounts() {
+            return context.store.listAccounts(LOCAL_ACCOUNT_PRINCIPAL);
           },
-          async resolveAccount(principal, accountId) {
+          async resolveAccount(_principal: unknown, accountId: string) {
             return {
-              account: context.store.resolveAccount(principal as ConnectedAccountPrincipal, accountId),
-              credentialOwnerId: principal.tenantId,
+              account: context.store.resolveAccount(LOCAL_ACCOUNT_PRINCIPAL, accountId),
+              credentialOwnerId: LOCAL_OWNER.workspaceId,
             };
           },
         },
@@ -405,135 +409,25 @@ test("serves the ConnectedAccount lifecycle and exposes only bound accounts thro
     listener.once("error", reject);
   });
   const origin = `http://127.0.0.1:${(listener.address() as AddressInfo).port}`;
-  const request = (path: string, init: RequestInit = {}) => fetch(`${origin}${path}`, {
-    ...init,
-    headers: {
-      authorization: "Bearer employee-jwt",
-      "content-type": "application/json",
-      ...init.headers,
-    },
-  });
-
+  const request = (path: string, init: RequestInit = {}) => fetch(`${origin}${path}`, init);
   try {
-    const unauthorized = await fetch(`${origin}/connected-account/v1/accounts`);
-    assert.equal(unauthorized.status, 401);
-    const forbidden = await fetch(`${origin}/connected-account/v1/accounts`, {
-      headers: { authorization: "Bearer invoke-only-jwt" },
-    });
-    assert.equal(forbidden.status, 403);
+    // The Connected Account Protocol is gone in a single-user build.
+    assert.equal((await request("/.well-known/connected-account")).status, 404);
+    assert.equal((await request("/connected-account/v1/accounts")).status, 404);
 
-    const invalidAttempt = await request("/connected-account/v1/authorization-attempts", {
-      method: "POST",
-      body: JSON.stringify({ employeeId: "employee-2" }),
-    });
-    assert.equal(invalidAttempt.status, 400);
+    // The local account API needs no credentials.
+    const listed = await request("/api/v1/accounts");
+    assert.equal(listed.status, 200);
+    const body = await listed.json() as { items: Array<{ connectionId: string }> };
+    assert.deepEqual(body.items.map((item) => item.connectionId), [bound.account.connectionId]);
 
-    const created = await fetch(`${origin}/connected-account/v1/authorization-attempts`, {
-      method: "POST",
-      headers: { authorization: "Bearer employee-jwt" },
-    });
-    assert.equal(created.status, 201);
-    const attempt = await created.json();
-    context.completions.set(attempt.attemptId, {
-      sellingPartnerId: "A1HTTPSELLER",
-      authorizedAt: "2026-07-21T10:01:00.000Z",
-    });
-    const polled = await request(
-      `/connected-account/v1/authorization-attempts/${attempt.attemptId}`,
-    );
-    const active = await polled.json();
-    assert.equal(active.status, "active");
+    // Starting an authorization attempt also needs no credentials.
+    const attempt = await request("/api/v1/accounts/authorization-attempts", { method: "POST" });
+    assert.equal(attempt.status, 201);
 
-    const unknownField = await request("/connected-account/v1/account-bindings", {
-      method: "POST",
-      body: JSON.stringify({
-        connectionId: active.connection.connectionId,
-        employeeId: "employee-2",
-      }),
-    });
-    assert.equal(unknownField.status, 400);
-    const bound = await request("/connected-account/v1/account-bindings", {
-      method: "POST",
-      body: JSON.stringify({ connectionId: active.connection.connectionId }),
-    });
-    assert.equal(bound.status, 201);
-    const repeatedBinding = await request("/connected-account/v1/account-bindings", {
-      method: "POST",
-      body: JSON.stringify({ connectionId: active.connection.connectionId }),
-    });
-    assert.equal(repeatedBinding.status, 200);
-
-    const invalidRemark = await request(
-      `/connected-account/v1/account-bindings/${active.connection.connectionId}/remark`,
-      { method: "PUT", body: JSON.stringify({ remark: "好".repeat(81) }) },
-    );
-    assert.equal(invalidRemark.status, 400);
-    const remarked = await request(
-      `/connected-account/v1/account-bindings/${active.connection.connectionId}/remark`,
-      { method: "PUT", body: JSON.stringify({ remark: "运营" }) },
-    );
-    assert.equal(remarked.status, 200);
-    assert.equal((await remarked.json()).remark, "运营");
-
-    const lookup = await request("/connected-account/v1/accounts/lookup", {
-      method: "POST",
-      body: JSON.stringify({
-        connectionIds: [active.connection.connectionId, active.connection.connectionId],
-      }),
-    });
-    assert.equal((await lookup.json()).items.length, 1);
-    for (const body of ["null", "[]", JSON.stringify("invalid"), '{"employeeId":"employee-2"}']) {
-      const invalidRefresh = await request("/connected-account/v1/accounts/refresh", {
-        method: "POST",
-        body,
-      });
-      assert.equal(invalidRefresh.status, 400);
-    }
-    const refreshed = await fetch(`${origin}/connected-account/v1/accounts/refresh`, {
-      method: "POST",
-      headers: { authorization: "Bearer employee-jwt" },
-    });
-    assert.equal(refreshed.status, 200);
-    assert.equal((await refreshed.json()).items.length, 1);
-    const repeatedRefresh = await request("/connected-account/v1/accounts/refresh", {
-      method: "POST",
-      body: "{}",
-    });
-    assert.equal((await repeatedRefresh.json()).items.length, 1);
-
-    const transport = new StreamableHTTPClientTransport(new URL(`${origin}/mcp`), {
-      requestInit: { headers: { authorization: "Bearer employee-jwt" } },
-    });
-    const client = new Client({ name: "connected-account-account-test", version: "1.0.0" });
-    await client.connect(transport);
-    const accounts = await client.callTool({ name: "amazon_list_accounts", arguments: {} });
-    assert.deepEqual(accounts.structuredContent, {
-      items: [{
-        account_id: active.connection.metadata.account_id,
-        name: "Amazon seller A1HTTPSELLER",
-        status: "active",
-        external_account_id: "A1HTTPSELLER",
-        capabilities: ["read"],
-      }],
-    });
-    await client.close();
-
-    const unbound = await request(
-      `/connected-account/v1/account-bindings/${active.connection.connectionId}`,
-      { method: "DELETE" },
-    );
-    assert.equal(unbound.status, 204);
-    const disconnected = await request(
-      `/connected-account/v1/connections/${active.connection.connectionId}`,
-      { method: "DELETE" },
-    );
-    assert.equal(disconnected.status, 204);
-    const disconnectedAgain = await request(
-      `/connected-account/v1/connections/${active.connection.connectionId}`,
-      { method: "DELETE" },
-    );
-    assert.equal(disconnectedAgain.status, 204);
-    assert.deepEqual(await (await request("/connected-account/v1/accounts")).json(), { items: [] });
+    // Disconnecting is unauthenticated too, and is idempotent.
+    assert.equal((await request(`/api/v1/accounts/${connectionId}`, { method: "DELETE" })).status, 204);
+    assert.deepEqual(await (await request("/api/v1/accounts")).json(), { items: [] });
   } finally {
     await new Promise<void>((resolve, reject) =>
       listener.close((error) => error ? reject(error) : resolve()));

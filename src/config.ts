@@ -3,7 +3,6 @@
 // @ts-nocheck
 import { readFile, stat } from "node:fs/promises";
 import YAML from "yaml";
-import type { ConnectedAccountJwtKey } from "./connected-account.js";
 
 export interface RuntimeConfig {
   host: string;
@@ -27,14 +26,6 @@ export interface RuntimeConfig {
   intentStoreFile: string;
   connectedAccountDatabaseFile: string;
   sellerCentralManageURL: string;
-  databaseUrl?: string;
-  postgresPool: { min: number; max: number; idleTimeoutMs: number };
-  redisUrl?: string;
-  redisNamespace: string;
-  connectedAccountEnabled: boolean;
-  connectedAccountJwtAudience?: string;
-  connectedAccountJwtKeys: ConnectedAccountJwtKey[];
-  connectedAccountAllowedOrigins: string[];
   adminSessionSecret?: string;
   operator?: {
     name: string;
@@ -386,17 +377,14 @@ export async function loadConfig(
     );
   }
 
-  const root = exactKeys(draft, ["server", "amazon", "storage", "connectedAccount", "admin", "operator"], "config");
+  const root = exactKeys(draft, ["server", "amazon", "storage", "admin", "operator"], "config");
   const server = exactKeys(root.server, ["host", "allowedHosts"], "server");
   const amazon = exactKeys(root.amazon, [
     "publicOrigin", "successRedirectUri", "applicationId", "authorizationUri",
     "applicationVersion", "lwa", "credentialKeys", "allowedSellingPartnerIds",
   ], "amazon");
   const lwa = exactKeys(amazon.lwa, ["clientId", "clientSecret"], "amazon.lwa");
-  const storage = exactKeys(root.storage, ["dataDirectory", "postgres", "redis"], "storage");
-  const connectedAccount = optionalSection(root.connectedAccount, [
-    "enabled", "audience", "allowedOrigins", "jwtKeys",
-  ], "connectedAccount");
+  const storage = exactKeys(root.storage, ["dataDirectory"], "storage");
   const admin = optionalSection(root.admin, ["sessionSecretFile", "oa"], "admin");
   const adminOa = optionalSection(admin.oa, [
     "issuer", "clientId", "clientSecretFile", "subject", "scopes",
@@ -482,37 +470,9 @@ export async function loadConfig(
   }
   const credentialKeyring = { currentKeyId, keys: keyMaterials };
 
-  // Storage
-  let postgresUrl = "";
-  let postgresPool = { min: 0, max: 10, idleTimeoutMs: 10_000 };
-  let redisUrl = "";
-  let redisNamespace = "amazon-sp-api";
-  if (storage.postgres) {
-    const postgres = exactKeys(storage.postgres, [
-      "url", "urlFile", "pool",
-    ], "storage.postgres");
-    postgresUrl = await exclusiveUrl(postgres, "storage.postgres");
-    const pool = optionalSection(postgres.pool, ["min", "max", "idleTimeoutMs"], "storage.postgres.pool");
-    const poolMin = integer(pool.min ?? 0, "storage.postgres.pool.min", { min: 0, max: 50 });
-    const poolMax = integer(pool.max ?? 10, "storage.postgres.pool.max", { min: 1, max: 100 });
-    if (poolMin > poolMax) {
-      throw new ConfigurationError("storage.postgres.pool", "min must be <= max");
-    }
-    const idleTimeoutMs = integer(pool.idleTimeoutMs ?? 10_000, "storage.postgres.pool.idleTimeoutMs", { min: 1000, max: 600_000 });
-    postgresPool = { min: poolMin, max: poolMax, idleTimeoutMs };
-  }
-  if (storage.redis) {
-    const redis = exactKeys(storage.redis, ["url", "urlFile", "namespace"], "storage.redis");
-    redisUrl = await exclusiveUrl(redis, "storage.redis");
-    redisNamespace = namespace(redis.namespace ?? "amazon-sp-api", "storage.redis.namespace");
-  }
-
   let adminSessionSecret = "";
   let parsedAdminOa;
   if (root.admin !== undefined) {
-    if (!postgresUrl) {
-      throw new ConfigurationError("admin", "requires storage.postgres");
-    }
     const raw = await readSecretFile(admin.sessionSecretFile, "admin.sessionSecretFile");
     adminSessionSecret = decodeSecretMaterial(raw, "admin.sessionSecretFile", { exactBytes: 32 });
     if (admin.oa !== undefined) {
@@ -545,38 +505,6 @@ export async function loadConfig(
     }
   }
 
-  // ConnectedAccount
-  const connectedAccountEnabled = boolean(connectedAccount.enabled, "connectedAccount.enabled", false);
-  let connectedAccountAudience = "";
-  let connectedAccountOrigins = [];
-  let connectedAccountJwtKeys = [];
-  if (connectedAccountEnabled) {
-    if (!postgresUrl || !redisUrl) {
-      throw new ConfigurationError("connectedAccount.enabled", "requires storage.postgres and storage.redis");
-    }
-    connectedAccountAudience = string(connectedAccount.audience, "connectedAccount.audience", { min: 3, max: 256 });
-    connectedAccountOrigins = stringList(connectedAccount.allowedOrigins, "connectedAccount.allowedOrigins", { nonEmpty: true, maxItems: 20 })
-      .map((item, index) => exactOrigin(item, `connectedAccount.allowedOrigins[${index}]`, { requireHttps: true }));
-    if (!Array.isArray(connectedAccount.jwtKeys) || connectedAccount.jwtKeys.length === 0) {
-      throw new ConfigurationError("connectedAccount.jwtKeys", "must be a non-empty list");
-    }
-    const kids = new Set();
-    for (const [index, item] of connectedAccount.jwtKeys.entries()) {
-      const entry = exactKeys(item, ["kid", "issuer", "secret", "secretFile"], `connectedAccount.jwtKeys[${index}]`);
-      const kid = string(entry.kid, `connectedAccount.jwtKeys[${index}].kid`, { max: 128 });
-      if (!/^[A-Za-z0-9._-]{1,128}$/.test(kid)) {
-        throw new ConfigurationError(`connectedAccount.jwtKeys[${index}].kid`, "is invalid");
-      }
-      if (kids.has(kid)) {
-        throw new ConfigurationError(`connectedAccount.jwtKeys[${index}].kid`, "is duplicated");
-      }
-      kids.add(kid);
-      const issuer = string(entry.issuer, `connectedAccount.jwtKeys[${index}].issuer`, { max: 512 });
-      const secret = await secretFromInlineOrFile(entry, `connectedAccount.jwtKeys[${index}]`);
-      connectedAccountJwtKeys.push({ kid, issuer, secret });
-    }
-  }
-
   const baseDataDirectory = dataDirectory.replace(/\/$/, "");
   const authorizationUri = httpsURL(amazon.authorizationUri, "amazon.authorizationUri");
   return {
@@ -598,14 +526,6 @@ export async function loadConfig(
     intentStoreFile: `${baseDataDirectory}/intents.json`,
     connectedAccountDatabaseFile: `${baseDataDirectory}/connected-account.sqlite`,
     sellerCentralManageURL: new URL("/apps/manage", authorizationUri).toString(),
-    databaseUrl: postgresUrl || undefined,
-    postgresPool,
-    redisUrl: redisUrl || undefined,
-    redisNamespace,
-    connectedAccountEnabled,
-    connectedAccountJwtAudience: connectedAccountAudience || undefined,
-    connectedAccountJwtKeys,
-    connectedAccountAllowedOrigins: connectedAccountOrigins,
     adminSessionSecret: adminSessionSecret || undefined,
     operator,
     adminOa: parsedAdminOa,

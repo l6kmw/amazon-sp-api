@@ -3,10 +3,11 @@ import { z } from "zod";
 
 import { abortAfter, waitForAbortable } from "./abort.js";
 import { AmazonMcpError, normalizeToolErrorMessage } from "./errors.js";
-import type { AccountAccessPolicy } from "./account-access-policy.js";
+
 import { mcpMetrics } from "./metrics.js";
 import type { AmazonDocumentReader } from "./document-reader.js";
 import type { AmazonPrincipal } from "./identity.js";
+import type { LocalAccountAccessPolicy } from "./local-identity.js";
 import {
   ConnectedAccountError,
   type ConnectedAccountProtocol,
@@ -70,7 +71,7 @@ export interface AmazonMcpServerOptions {
   regionCache?: AmazonSellerRegionCache;
   capabilityTracker?: SpApiCapabilityTracker;
   documentReader?: Pick<AmazonDocumentReader, "readPage">;
-  accountAccessPolicy?: AccountAccessPolicy;
+  accountAccessPolicy?: LocalAccountAccessPolicy;
   logger?: StructuredLogger;
   now?: () => number;
   searchOrdersBudgetMs?: number;
@@ -459,11 +460,9 @@ export function createAmazonMcpServer(
         throw new AmazonMcpError("TENANT_REQUIRED", "authenticated identity is required");
       }
       return successResult(identityOutputSchema, {
-        identity_type: options.principal.authType === "employee_jwt"
-          ? "employee_jwt"
-          : "test_agent_token",
+        identity_type: "local_owner",
         identity_id: publicIdentityId(options.principal),
-        role: options.principal.authType === "employee_jwt" ? "employee" : "test_agent",
+        role: "owner",
       });
     },
   );

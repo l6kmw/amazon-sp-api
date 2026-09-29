@@ -3,9 +3,11 @@ import { waitForAbortable } from "./abort.js";
 import type { RefreshTokenCredential, RefreshTokenProvider } from "./token-store.js";
 import { NULL_LOGGER, type StructuredLogger } from "./logger.js";
 import { mcpMetrics } from "./metrics.js";
-import type { AccessTokenCoordinator, SharedAccessToken } from "./redis-coordinator.js";
 
-type CachedAccessToken = SharedAccessToken;
+interface CachedAccessToken {
+  accessToken: string;
+  expiresAt: number;
+}
 
 interface LwaResponse {
   access_token?: string;
@@ -49,7 +51,6 @@ export class LwaAccessTokenProvider {
   readonly #refreshTokens: RefreshTokenProvider;
   readonly #fetch: typeof fetch;
   readonly #logger: StructuredLogger;
-  readonly #coordinator?: AccessTokenCoordinator;
   readonly #cache = new Map<string, CachedAccessToken>();
   readonly #inFlight = new Map<string, Promise<string>>();
   readonly #generations = new Map<string, number>();
@@ -60,14 +61,12 @@ export class LwaAccessTokenProvider {
     refreshTokens: RefreshTokenProvider;
     fetchImpl?: typeof fetch;
     logger?: StructuredLogger;
-    coordinator?: AccessTokenCoordinator;
   }) {
     this.#clientId = options.clientId;
     this.#clientSecret = options.clientSecret;
     this.#refreshTokens = options.refreshTokens;
     this.#fetch = options.fetchImpl ?? fetch;
     this.#logger = options.logger ?? NULL_LOGGER;
-    this.#coordinator = options.coordinator;
   }
 
   async getAccessToken(
@@ -89,15 +88,8 @@ export class LwaAccessTokenProvider {
       signal?.throwIfAborted();
       await waitForAbortable(this.#invalidateKey(key), signal);
     }
-    const cached = this.#coordinator ? undefined : this.#cache.get(key);
+    const cached = this.#cache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.accessToken;
-    if (this.#coordinator && !forceRefresh) {
-      const shared = await waitForAbortable(this.#coordinator.get(key), signal);
-      if (shared) {
-        this.#cache.set(key, shared);
-        return shared.accessToken;
-      }
-    }
 
     const activeExchange = this.#inFlight.get(key);
     if (activeExchange) return waitForAbortable(activeExchange, signal);
@@ -143,13 +135,6 @@ export class LwaAccessTokenProvider {
       local.accessToken !== rejectedAccessToken
     ) {
       return local.accessToken;
-    }
-    if (this.#coordinator) {
-      const shared = await waitForAbortable(this.#coordinator.get(key), signal);
-      if (shared && shared.accessToken !== rejectedAccessToken) {
-        this.#cache.set(key, shared);
-        return shared.accessToken;
-      }
     }
 
     const activeExchange = this.#inFlight.get(key);
@@ -197,39 +182,15 @@ export class LwaAccessTokenProvider {
     rejectedAccessToken: string | undefined,
     credential: RefreshTokenCredential,
   ): Promise<string> {
-    if (!this.#coordinator) {
-      // Caller invalidates for forceRefresh / recover; do not invalidate again here.
-      return (await this.#exchangeAccessToken(
-        key,
-        generation,
-        sellingPartnerId,
-        tenantId,
-        credential,
-      )).accessToken;
-    }
-    return this.#coordinator.runWithLock(key, async () => {
-      const shared = await this.#coordinator!.get(key);
-      if (shared) {
-        // Reuse any shared token that is not the rejected one (or any when not recovering).
-        if (!rejectedAccessToken || shared.accessToken !== rejectedAccessToken) {
-          if (!forceRefresh || rejectedAccessToken) {
-            if ((this.#generations.get(key) ?? 0) === generation) {
-              this.#cache.set(key, shared);
-            }
-            return shared.accessToken;
-          }
-        }
-      }
-      const exchanged = await this.#exchangeAccessToken(
-        key,
-        generation,
-        sellingPartnerId,
-        tenantId,
-        credential,
-      );
-      await this.#coordinator!.set(key, exchanged);
-      return exchanged.accessToken;
-    });
+    // Single process: the caller already invalidated for forceRefresh/recover,
+    // so exchange directly without a distributed lock.
+    return (await this.#exchangeAccessToken(
+      key,
+      generation,
+      sellingPartnerId,
+      tenantId,
+      credential,
+    )).accessToken;
   }
 
   async #exchangeAccessToken(
@@ -386,6 +347,5 @@ export class LwaAccessTokenProvider {
     this.#cache.delete(key);
     this.#inFlight.delete(key);
     this.#generations.set(key, (this.#generations.get(key) ?? 0) + 1);
-    await this.#coordinator?.delete(key);
   }
 }

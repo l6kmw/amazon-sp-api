@@ -1,5 +1,4 @@
-# Production Compose binds host loopback only. PostgreSQL/Redis are external:
-# put URLs in private config.yaml (storage.postgres / storage.redis), never here.
+# Single-user Compose. Binds host loopback only; no database services are needed.
 services:
   amazon-sp-api:
     platform: ${AMAZON_PLATFORM:-linux/amd64}
@@ -20,8 +19,6 @@ services:
         max-file: "5"
     ports:
       - "127.0.0.1:${AMAZON_PORT:-8789}:8789"
-      # Ads shares this service's network namespace so the admin proxy remains loopback-only.
-      - "127.0.0.1:${AMAZON_ADS_PORT:-8790}:8790"
     volumes:
       - type: bind
         source: ./config.yaml
@@ -34,53 +31,6 @@ services:
     # 应用不会自动访问宿主机 8080 或任何外部身份服务。
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    read_only: true
-    tmpfs:
-      - /tmp:size=16m,mode=1777
-    healthcheck:
-      test: ["CMD", "node", "/app/docker/healthcheck.mjs"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 40s
-    stop_grace_period: 15s
-
-  amazon-ads-mcp:
-    platform: ${AMAZON_PLATFORM:-linux/amd64}
-    build:
-      context: ../amazon-ads-mcp
-      dockerfile: docker/Dockerfile
-      args:
-        AMAZON_ADS_IMAGE_REVISION: ${AMAZON_ADS_IMAGE_REVISION:-local}
-        AMAZON_ADS_IMAGE_VERSION: ${AMAZON_ADS_IMAGE_TAG:-local}
-    image: ${AMAZON_ADS_IMAGE_REPOSITORY:-amazon-ads-mcp}:${AMAZON_ADS_IMAGE_TAG:-local}
-    init: true
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "5"
-    network_mode: "service:amazon-sp-api"
-    depends_on:
-      amazon-sp-api:
-        condition: service_started
-    volumes:
-      - type: bind
-        source: ../amazon-ads-mcp/config.yaml
-        target: /app/config.yaml
-        read_only: true
-      - type: bind
-        source: ../amazon-ads-mcp/data
-        target: /data/amazon-ads
-      - type: bind
-        source: ../amazon-ads-mcp/secrets
-        target: /run/secrets/amazon-ads
-        read_only: true
     security_opt:
       - no-new-privileges:true
     cap_drop:

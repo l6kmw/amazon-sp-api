@@ -29,9 +29,6 @@ bun run test
 bun run typecheck
 bun run build
 
-echo "==> admin frontend security"
-node scripts/verify-admin-security.mjs
-
 echo "==> generated registry / configuration / diff checks"
 node --input-type=module -e 'import { readFile } from "node:fs/promises"; import YAML from "yaml"; const value=YAML.parse(await readFile("config.example.yaml","utf8"), { uniqueKeys:true }); if (!value || typeof value!=="object" || "mcp" in value) process.exit(1)'
 if rg -n 'host\.docker\.internal:8080|LegacyIdentityVerifier|identityValidationURL|identityHealthURL' src; then

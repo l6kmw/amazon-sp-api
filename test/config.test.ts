@@ -40,8 +40,6 @@ amazon:
   allowedSellingPartnerIds: [A1SELLER]
 storage:
   dataDirectory: /data
-connectedAccount:
-  enabled: false
 `;
 
 test("loads v2 without an mcp section or external identity URL", async () => {
@@ -90,114 +88,11 @@ test("rejects old single-service fields, unknown fields and unsafe permissions",
   await assert.rejects(loadConfig(file), /config permissions/);
 });
 
-test("loads PostgreSQL, Redis and local ConnectedAccount JWT verification", async () => {
-  const jwt = randomBytes(32).toString("base64");
-  const yaml = validYaml
-    .replace("storage:\n  dataDirectory: /data", `storage:
-  dataDirectory: /data
-  postgres:
-    url: postgresql://amazon:redacted@127.0.0.1:5432/amazon
-    pool: { min: 0, max: 12, idleTimeoutMs: 12000 }
-  redis:
-    url: redis://127.0.0.1:6379/0
-    namespace: amazon-sp-api`)
-    .replace("connectedAccount:\n  enabled: false", `connectedAccount:
-  enabled: true
-  audience: amazon-sp-api-account-service
-  allowedOrigins: [https://app.example.com]
-  jwtKeys:
-    - kid: provider-v1
-      issuer: https://example.com
-      secret: ${jwt}`);
-  const config = await loadConfig(await configFile(yaml));
-  assert.equal(config.connectedAccountEnabled, true);
-  assert.equal(config.connectedAccountJwtKeys[0]?.kid, "provider-v1");
-  assert.equal(config.postgresPool.max, 12);
-  assert.equal(config.redisNamespace, "amazon-sp-api");
-});
-
-test("loads the admin session key only from a private file with PostgreSQL", async () => {
-  const sessionKey = randomBytes(32).toString("base64");
-  const initial = await configFile(validYaml);
-  const secretFile = join(dirname(initial), "admin-session.key");
-  await writeFile(secretFile, sessionKey, { mode: 0o600 });
-  const yaml = validYaml
-    .replace("storage:\n  dataDirectory: /data", `storage:
-  dataDirectory: /data
-  postgres:
-    url: postgresql://amazon:redacted@127.0.0.1:5432/amazon`)
-    + `admin:\n  sessionSecretFile: ${secretFile}\n`;
-  const file = await configFile(yaml);
-  assert.equal((await loadConfig(file)).adminSessionSecret, sessionKey);
-
-  await chmod(secretFile, 0o644);
-  await assert.rejects(loadConfig(file), /admin\.sessionSecretFile.*0600 or stricter/);
-  await assert.rejects(
-    loadConfig(await configFile(`${validYaml}admin:\n  sessionSecretFile: ${secretFile}\n`)),
-    /admin requires storage\.postgres/,
-  );
-});
-
-test("loads strict OA OIDC settings and derives the fixed callback", async () => {
-  const initial = await configFile(validYaml);
-  const directory = dirname(initial);
-  const sessionSecretFile = join(directory, "admin-session.key");
-  const clientSecretFile = join(directory, "oa-client.secret");
-  await writeFile(sessionSecretFile, randomBytes(32).toString("base64"), { mode: 0o600 });
-  await writeFile(clientSecretFile, "oa-client-secret-with-enough-entropy", { mode: 0o600 });
-  const yaml = validYaml
-    .replace("storage:\n  dataDirectory: /data", `storage:
-  dataDirectory: /data
-  postgres:
-    url: postgresql://amazon:redacted@127.0.0.1:5432/amazon`)
-    + `admin:
-  sessionSecretFile: ${sessionSecretFile}
-  oa:
-    issuer: https://oa.example.com/tenant
-    clientId: amazon-admin
-    clientSecretFile: ${clientSecretFile}
-    subject: oa-admin-subject
-`;
-  const config = await loadConfig(await configFile(yaml));
-  assert.deepEqual(config.adminOa, {
-    issuer: "https://oa.example.com/tenant",
-    clientId: "amazon-admin",
-    clientSecret: "oa-client-secret-with-enough-entropy",
-    subject: "oa-admin-subject",
-    scope: "openid profile",
-    redirectUri: "https://api.example.com/api/v1/admin/oa/callback",
-  });
-
-  await assert.rejects(
-    loadConfig(await configFile(yaml.replace("https://oa.example.com/tenant", "http://oa.example.com/tenant"))),
-    /admin\.oa\.issuer.*HTTPS issuer URL/,
-  );
-  await assert.rejects(
-    loadConfig(await configFile(yaml.replace(
-      "https://oa.example.com/tenant",
-      "https://oa.example.com/.well-known/openid-configuration",
-    ))),
-    /admin\.oa\.issuer.*discovery-document path/,
-  );
-  await assert.rejects(
-    loadConfig(await configFile(yaml.replace("    subject: oa-admin-subject\n", "    subject: oa-admin-subject\n    scopes: [profile]\n"))),
-    /admin\.oa\.scopes must include openid/,
-  );
-  await assert.rejects(
-    loadConfig(await configFile(yaml.replace("    subject: oa-admin-subject\n", "    subject: oa-admin-subject\n    redirectUri: https://attacker.example/callback\n"))),
-    /admin\.oa\.redirectUri is not supported/,
-  );
-  await chmod(clientSecretFile, 0o644);
-  await assert.rejects(loadConfig(await configFile(yaml)), /admin\.oa\.clientSecretFile.*0600 or stricter/);
-});
-
-test("requires PostgreSQL and Redis when ConnectedAccount is enabled", async () => {
-  const incomplete = validYaml.replace("enabled: false", `enabled: true
-  audience: amazon-sp-api-account-service
-  allowedOrigins: [https://app.example.com]
-  jwtKeys:
-    - kid: provider-v1
-      issuer: https://example.com
-      secret: ${randomBytes(32).toString("base64")}`);
-  await assert.rejects(loadConfig(await configFile(incomplete)), /requires storage\.postgres and storage\.redis/);
+test("loads file-backed storage without any database service", async () => {
+  const config = await loadConfig(await configFile(validYaml));
+  assert.equal(config.dataDirectory, "/data");
+  assert.equal(config.tokenStoreFile, "/data/tokens.json");
+  assert.equal(config.stateStoreFile, "/data/states.json");
+  assert.equal(config.intentStoreFile, "/data/intents.json");
+  assert.ok(config.connectedAccountDatabaseFile.startsWith("/data/"));
 });

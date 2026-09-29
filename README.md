@@ -106,6 +106,101 @@ AMAZON_CONFIG_FILE=./config.yaml bun run storage:rotate-key
 AMAZON_CONFIG_FILE=./config.yaml bun run storage:rotate-key -- --apply --batch=100
 ```
 
+## 接入你自己的身份提供方
+
+本服务不绑定任何特定平台。它对上游的要求只有一条：**用 HS256 签发短期 JWT**。任何能签发
+这类 Token 的系统都可以驱动它，包括 Keycloak、Auth0、自建签发服务或你自己的应用后端。
+
+协议定义见 [Connected Account Protocol v1](https://github.com/l6kmw/build-connected-account-mcp/blob/main/references/connected-account-protocol-v1.md)。
+
+### 本服务的配置位置
+
+```yaml
+connectedAccount:
+  enabled: true
+  audience: your-account-service          # 必须出现在 JWT 的 aud 中
+  allowedOrigins:                         # 允许发起授权流程的前端 Origin（精确匹配）
+    - "https://your-console.example.com"
+  jwtKeys:                                # 信任列表；轮换期可同时保留多个 kid
+    - kid: "provider-v1"
+      issuer: "https://your-idp.example.com/prod"   # 必须与 JWT 的 iss 精确相等
+      secretFile: "/run/secrets/connected-account-jwt-v1"
+```
+
+`secret` 与 `secretFile` 二选一，密钥至少 32 字节。启用 `connectedAccount` 必须同时配置
+`storage.postgres` 与 `storage.redis`。
+
+### 服务发现
+
+```http
+GET /.well-known/connected-account
+```
+
+返回 `protocolVersion`、`providerKey`、`displayName`、`authorizationFlow`、`capabilities`
+与 `runtime`（规范账号列表工具名与账号参数名）。此端点公开，不需要认证。
+
+### JWT 契约
+
+Header 必须为 `{"alg":"HS256","typ":"JWT","kid":"<你的 key id>"}`，Payload：
+
+| Claim | 要求 |
+| --- | --- |
+| `iss` | 必须与服务端为该 `kid` 配置的 issuer **精确相等** |
+| `sub` | 稳定员工标识；`sub` 相同但 `iss` 不同视为不同员工 |
+| `aud` | 字符串或数组，必须包含配置的 audience |
+| `scope` | 空格分隔，至少包含接口要求的一个 Scope |
+| `jti` | 必填非空，唯一 |
+| `iat` / `nbf` / `exp` | 有效时间戳；`exp - iat` 必须 **> 0 且 ≤ 300 秒** |
+
+校验顺序、允许 30 秒时钟偏差、算法固定 HS256（拒绝 `none` 与算法协商）等细节以协议文档为准。
+
+> **注意**：`sub` 是标准 JWT 字段。不需要把员工 ID 放进自定义 claim，也不存在“平台专有字段”。
+
+### Scope
+
+| Scope | 用途 |
+| --- | --- |
+| `config:check` | 检查 Provider JWT 配置与身份 |
+| `mcp:catalog` | 读取 MCP 能力目录 |
+| `mcp:invoke` | 调用 MCP 业务工具 |
+| `connected_accounts:manage` | 授权、连接、绑定、备注、解绑与断开 |
+
+### 账号生命周期 API
+
+```http
+GET  /connected-account/v1/auth/check
+GET  /connected-account/v1/accounts
+POST /connected-account/v1/accounts/refresh
+POST /connected-account/v1/accounts/lookup
+POST /connected-account/v1/authorization-attempts
+GET  /connected-account/v1/authorization-attempts/{attemptId}
+POST /connected-account/v1/account-bindings
+PUT  /connected-account/v1/account-bindings/{connectionId}/remark
+DELETE /connected-account/v1/account-bindings/{connectionId}
+DELETE /connected-account/v1/connections/{connectionId}
+```
+
+全部使用 `Authorization: Bearer <JWT>` 与 `Content-Type: application/json`。
+
+### 三层身份模型
+
+服务刻意把三件事分开建模，务必理解后再投入生产：
+
+1. **Provider JWT 身份** — 谁在调用（`iss + sub`）。
+2. **Connection Grant** — 某个 `connectionId` 获准使用某个外部账号（按 `issuer` 隔离）。
+3. **Employee Binding** — 该身份在自己的工作区里绑定了哪些连接（按 `issuer + sub` 隔离）。
+
+**解绑员工不等于吊销第三方凭据**；断开 connection 也不能误删其他员工仍在使用的账号。
+
+### 用只读脚本验证接入
+
+```bash
+export CONNECTED_ACCOUNT_JWT='<短期 JWT>'
+python3 scripts/verify_connected_account_mcp.py --base-url https://your-host
+```
+
+不设置 JWT 时只检查公开发现清单与 MCP 健康端点。脚本为只读，不会调用授权、绑定、解绑或任何业务写接口。
+
 ## HTTP 契约
 
 | 路径 | 用途 |

@@ -771,7 +771,7 @@ test("serves the public privacy policy without authentication", async () => {
     assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/u);
     assert.equal(response.headers.get("cache-control"), "no-store");
     assert.match(body, /Privacy Policy/u);
-    assert.match(body, /support@connected-account\.com/u);
+    assert.match(body, /\{\{OPERATOR_EMAIL\}\}/u);
     assert.match(body, /encrypted refresh tokens/u);
     assert.match(body, /does not sell Amazon data/u);
     assert.doesNotMatch(body, /(?:client[_ -]?secret|access[_ -]?token)\s*[:=]\s*["'][^"']+/iu);
@@ -798,12 +798,49 @@ test("serves the public company profile without authentication or JavaScript", a
     assert.equal(response.status, 200);
     assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/u);
     assert.equal(response.headers.get("cache-control"), "no-store");
-    assert.match(body, /深圳市旧实现智能科技有限公司/u);
-    assert.match(body, /91440300MAKFW2Q969/u);
+    assert.match(body, /\{\{OPERATOR_LEGAL_NAME\}\}/u);
+    assert.match(body, /\{\{OPERATOR_REGISTRATION_ID\}\}/u);
     assert.match(body, /Amazon Ads API integrations/u);
-    assert.match(body, /support@connected-account\.com/u);
+    assert.match(body, /\{\{OPERATOR_EMAIL\}\}/u);
     assert.doesNotMatch(body, /<script\s+[^>]*src=/iu);
     assert.doesNotMatch(body, /(?:client[_ -]?secret|access[_ -]?token)\s*[:=]\s*["'][^"']+/iu);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("renders operator details into legal pages when configured", async () => {
+  const app = createAmazonMcpHttpApp({
+    host: "127.0.0.1",
+    allowedHosts: ["127.0.0.1", "localhost"],
+    version: "0.1.0",
+    authenticate: async () => {
+      throw new Error("company route must not authenticate");
+    },
+    createServer: () => createAmazonMcpServer({ async get() { return {}; } }),
+    operator: {
+      name: "Example Operator",
+      legalName: "示例运营主体有限公司",
+      legalNameEn: "Example Operator Ltd.",
+      url: "https://operator.example.com",
+      email: "privacy@operator.example.com",
+      siteUrl: "https://api.operator.example.com",
+      initial: "E",
+    },
+  });
+  const { server, origin } = await listen(app);
+  try {
+    const response = await fetch(`${origin}/company`);
+    const body = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.match(body, /Example Operator/u);
+    assert.match(body, /示例运营主体有限公司/u);
+    assert.match(body, /privacy@operator\.example\.com/u);
+    assert.match(body, /https:\/\/operator\.example\.com/u);
+    // operator-supplied placeholders are substituted; ones the operator did not
+    // supply stay literal rather than borrowing another company's values
+    assert.match(body, /\{\{OPERATOR_REGISTRATION_ID\}\}/u);
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }

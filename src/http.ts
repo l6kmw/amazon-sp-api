@@ -7,7 +7,46 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express, { type NextFunction, type Request, type Response } from "express";
 
-import { registerAdminAccountRoutes } from "./admin-accounts.js";
+import { registerAdminAccountRoutes } from "./admin-accounts.js";/**
+ * Operator details for the public legal pages (company profile + privacy policy).
+ * These pages are shown to Amazon during seller-app review, so a self-hosted
+ * deployment must present its own entity. Unset values stay as literal
+ * placeholders rather than silently rendering someone else's company.
+ */
+export interface OperatorProfile {
+  name: string;
+  legalName?: string;
+  legalNameEn?: string;
+  url?: string;
+  wwwUrl?: string;
+  email?: string;
+  siteUrl?: string;
+  initial?: string;
+  registrationId?: string;
+}
+
+function renderLegalPage(templatePath: string, operator?: OperatorProfile): string {
+  const html = fs.readFileSync(templatePath, "utf8");
+  if (!operator) return html;
+  const values: Record<string, string> = {
+    OPERATOR_NAME: operator.name,
+    OPERATOR_INITIAL: operator.initial ?? operator.name.slice(0, 1).toUpperCase(),
+    COPYRIGHT_YEAR: String(new Date().getFullYear()),
+  };
+  for (const [key, value] of Object.entries({
+    OPERATOR_LEGAL_NAME: operator.legalName,
+    OPERATOR_LEGAL_NAME_EN: operator.legalNameEn,
+    OPERATOR_URL: operator.url,
+    OPERATOR_WWW_URL: operator.wwwUrl ?? operator.url,
+    OPERATOR_EMAIL: operator.email,
+    OPERATOR_SITE_URL: operator.siteUrl,
+    OPERATOR_REGISTRATION_ID: operator.registrationId,
+  })) {
+    if (value !== undefined) values[key] = value;
+  }
+  return html.replace(/\{\{([A-Z_]+)\}\}/g, (match, key: string) => values[key] ?? match);
+}
+
 import { registerAdminAdsRoutes, type AdminAdsService } from "./admin-ads.js";
 import { registerAdminAgentRoutes, type AdminAgentService } from "./admin-agents.js";
 import { registerAdminAuditRoutes, type AdminAuditService } from "./admin-audit.js";
@@ -175,6 +214,7 @@ export function createAmazonMcpHttpApp(options: {
   adminAds?: AdminAdsService;
   adminOa?: AdminOaOptions;
   portal?: AmazonPortalOptions;
+  operator?: OperatorProfile;
 }) {
   const logger = options.logger ?? NULL_LOGGER;
   const argumentLogger = options.argumentLogger ?? NULL_MCP_ARGUMENT_LOGGER;
@@ -234,7 +274,7 @@ export function createAmazonMcpHttpApp(options: {
       response.setHeader("cache-control", "no-store");
       response.setHeader("content-type", "text/html; charset=utf-8");
       response.setHeader("x-content-type-options", "nosniff");
-      response.sendFile(privacyPath, (error) => error ? next(error) : undefined);
+      response.send(renderLegalPage(privacyPath, options.operator));
     });
   }
   const companyPath = [
@@ -246,7 +286,7 @@ export function createAmazonMcpHttpApp(options: {
       response.setHeader("cache-control", "no-store");
       response.setHeader("content-type", "text/html; charset=utf-8");
       response.setHeader("x-content-type-options", "nosniff");
-      response.sendFile(companyPath, (error) => error ? next(error) : undefined);
+      response.send(renderLegalPage(companyPath, options.operator));
     });
   }
   if (fs.existsSync(webDistPath)) {

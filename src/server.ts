@@ -341,6 +341,7 @@ export async function createRuntime(configFile?: string) {
       connectedAccountOrigins: config.connectedAccountAllowedOrigins,
       connectedAccountJwtKeys: config.connectedAccountJwtKeys.map(({ kid, issuer }) => ({ kid, issuer })),
     },
+    operator: config.operator,
   });
   app.use(createAmazonOAuthRouter({
     config,

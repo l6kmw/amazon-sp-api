@@ -36,6 +36,17 @@ export interface RuntimeConfig {
   connectedAccountJwtKeys: ConnectedAccountJwtKey[];
   connectedAccountAllowedOrigins: string[];
   adminSessionSecret?: string;
+  operator?: {
+    name: string;
+    legalName?: string;
+    legalNameEn?: string;
+    url?: string;
+    wwwUrl?: string;
+    email?: string;
+    siteUrl?: string;
+    initial?: string;
+    registrationId?: string;
+  };
   adminOa?: {
     issuer: string;
     clientId: string;
@@ -87,6 +98,11 @@ function string(value, path, { optional = false, min = 1, max = 4096 } = {}) {
     throw new ConfigurationError(path, `must be at most ${max} characters`);
   }
   return trimmed;
+}
+
+function optionalString(value, path) {
+  if (value === undefined || value === null || value === "") return undefined;
+  return string(value, path);
 }
 
 function boolean(value, path, fallback = false) {
@@ -370,7 +386,7 @@ export async function loadConfig(
     );
   }
 
-  const root = exactKeys(draft, ["server", "amazon", "storage", "connectedAccount", "admin"], "config");
+  const root = exactKeys(draft, ["server", "amazon", "storage", "connectedAccount", "admin", "operator"], "config");
   const server = exactKeys(root.server, ["host", "allowedHosts"], "server");
   const amazon = exactKeys(root.amazon, [
     "publicOrigin", "successRedirectUri", "applicationId", "authorizationUri",
@@ -385,6 +401,20 @@ export async function loadConfig(
   const adminOa = optionalSection(admin.oa, [
     "issuer", "clientId", "clientSecretFile", "subject", "scopes",
   ], "admin.oa");
+  const operatorSection = optionalSection(root.operator, [
+    "name", "legalName", "legalNameEn", "url", "wwwUrl", "email", "siteUrl", "initial", "registrationId",
+  ], "operator");
+  const operator = operatorSection.name === undefined ? undefined : {
+    name: string(operatorSection.name, "operator.name"),
+    legalName: optionalString(operatorSection.legalName, "operator.legalName"),
+    legalNameEn: optionalString(operatorSection.legalNameEn, "operator.legalNameEn"),
+    url: optionalString(operatorSection.url, "operator.url"),
+    wwwUrl: optionalString(operatorSection.wwwUrl, "operator.wwwUrl"),
+    email: optionalString(operatorSection.email, "operator.email"),
+    siteUrl: optionalString(operatorSection.siteUrl, "operator.siteUrl"),
+    initial: optionalString(operatorSection.initial, "operator.initial"),
+    registrationId: optionalString(operatorSection.registrationId, "operator.registrationId"),
+  };
 
   const host = string(server.host, "server.host");
   const allowedHosts = stringList(server.allowedHosts, "server.allowedHosts", { nonEmpty: true });
@@ -577,6 +607,7 @@ export async function loadConfig(
     connectedAccountJwtKeys,
     connectedAccountAllowedOrigins: connectedAccountOrigins,
     adminSessionSecret: adminSessionSecret || undefined,
+    operator,
     adminOa: parsedAdminOa,
   };
 }

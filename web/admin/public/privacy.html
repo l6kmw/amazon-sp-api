@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light" />
-    <meta name="description" content="Privacy Policy for the ConnectedAccount Amazon API and Amazon Ads MCP services." />
-    <title>Privacy Policy | ConnectedAccount Amazon Services</title>
+    <meta name="description" content="Privacy Policy for the {{OPERATOR_NAME}} Amazon API and Amazon Ads MCP services." />
+    <title>Privacy Policy | {{OPERATOR_NAME}} Amazon Services</title>
     <style>
       :root {
         color-scheme: light;
@@ -343,9 +343,9 @@
   <body>
     <header class="site-header">
       <div class="header-inner">
-        <a class="brand" href="https://www.example.com/" aria-label="ConnectedAccount home">
-          <span class="brand-mark" aria-hidden="true">F</span>
-          <span>ConnectedAccount</span>
+        <a class="brand" href="{{OPERATOR_WWW_URL}}/" aria-label="{{OPERATOR_NAME}} home">
+          <span class="brand-mark" aria-hidden="true">{{OPERATOR_INITIAL}}</span>
+          <span>{{OPERATOR_NAME}}</span>
         </a>
         <span class="service-label">Amazon API and Ads MCP services</span>
       </div>
@@ -371,8 +371,8 @@
         <p class="eyebrow">Legal</p>
         <h1>Privacy Policy</h1>
         <p class="lead">
-          This policy explains how ConnectedAccount handles information when an authorized user connects
-          Amazon selling or advertising accounts to the ConnectedAccount Amazon API and Amazon Ads MCP services.
+          This policy explains how {{OPERATOR_NAME}} handles information when an authorized user connects
+          Amazon selling or advertising accounts to the {{OPERATOR_NAME}} Amazon API and Amazon Ads MCP services.
         </p>
         <p class="effective-date">Effective August 6, 2026</p>
 
@@ -380,7 +380,7 @@
           <h2>1. Scope</h2>
           <p>
             This policy applies to the Amazon connection, account-management, and MCP interfaces
-            operated by ConnectedAccount. It covers information received directly from authorized users,
+            operated by {{OPERATOR_NAME}}. It covers information received directly from authorized users,
             from Login with Amazon, and from Amazon APIs after a user grants access.
           </p>
           <p>
@@ -435,7 +435,7 @@
             <li>protect the services, investigate failures, maintain audit records, and meet applicable obligations.</li>
           </ul>
           <p class="notice">
-            ConnectedAccount does not use Amazon data for unrelated advertising, audience building, or independent
+            {{OPERATOR_NAME}} does not use Amazon data for unrelated advertising, audience building, or independent
             commercial profiling.
           </p>
         </section>
@@ -443,7 +443,7 @@
         <section class="policy-section" id="sharing">
           <h2>4. Sharing and sale of data</h2>
           <p>
-            ConnectedAccount does not sell Amazon data. Amazon data is not shared across customers or tenants.
+            {{OPERATOR_NAME}} does not sell Amazon data. Amazon data is not shared across customers or tenants.
             Access is limited to the tenant and users whose active grants and bindings authorize the
             connected account.
           </p>
@@ -463,14 +463,14 @@
             Restricted MCP tool-input logs are retained for 168 hours and then deleted.
           </p>
           <p>
-            An authorized account owner can disconnect an account from the ConnectedAccount Amazon connection
+            An authorized account owner can disconnect an account from the {{OPERATOR_NAME}} Amazon connection
             management page. Users may also revoke Login with Amazon access through their Amazon account.
             Revocation prevents new API access but does not automatically delete records that must be kept
             for legitimate security or legal purposes.
           </p>
           <p>
             To request access to or deletion of connection data, email the address below. Include enough
-            information to identify the relevant ConnectedAccount workspace and connection. We may verify the
+            information to identify the relevant {{OPERATOR_NAME}} workspace and connection. We may verify the
             requester's identity and authority before acting on the request.
           </p>
         </section>
@@ -478,7 +478,7 @@
         <section class="policy-section" id="security">
           <h2>6. Security</h2>
           <p>
-            ConnectedAccount uses transport encryption, authenticated access controls, encrypted credential storage,
+            {{OPERATOR_NAME}} uses transport encryption, authenticated access controls, encrypted credential storage,
             tenant-scoped grants and bindings, least-privilege service boundaries, and audit logging to
             protect Amazon connection data. OAuth refresh tokens are encrypted at rest and are not exposed
             in the browser-based account-management interface.
@@ -492,7 +492,7 @@
         <section class="policy-section" id="transfers">
           <h2>7. Service providers and international processing</h2>
           <p>
-            ConnectedAccount may use hosting, database, security, and monitoring providers to operate the services.
+            {{OPERATOR_NAME}} may use hosting, database, security, and monitoring providers to operate the services.
             These providers process information under contractual or technical restrictions and only for
             service delivery. Depending on the user's location and the selected Amazon region, information
             may be processed outside the user's country.
@@ -511,17 +511,17 @@
         <section class="policy-section" id="contact">
           <h2>9. Contact</h2>
           <p>
-            For privacy questions, revocation assistance, or data access and deletion requests, contact ConnectedAccount at:
+            For privacy questions, revocation assistance, or data access and deletion requests, contact {{OPERATOR_NAME}} at:
           </p>
-          <p class="contact-line"><a href="mailto:support@example.com">support@example.com</a></p>
+          <p class="contact-line"><a href="mailto:{{OPERATOR_EMAIL}}">{{OPERATOR_EMAIL}}</a></p>
         </section>
       </main>
     </div>
 
     <footer>
       <div class="footer-inner">
-        <span>&copy; 2026 ConnectedAccount</span>
-        <a href="https://www.example.com/">Return to ConnectedAccount</a>
+        <span>&copy; {{COPYRIGHT_YEAR}} {{OPERATOR_NAME}}</span>
+        <a href="{{OPERATOR_WWW_URL}}/">Return to {{OPERATOR_NAME}}</a>
       </div>
     </footer>
   </body>

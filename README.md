@@ -149,6 +149,23 @@ Compose 只映射 `127.0.0.1:${AMAZON_PORT:-8789}:8789`。公网必须经过 HTT
 
 详细上线、备份、验证和回滚流程见 [`docs/operations/DEPLOYMENT.md`](./docs/operations/DEPLOYMENT.md)。
 
+### 运营主体信息（自部署必读）
+
+`/company` 与 `/privacy` 是面向 Amazon 卖家应用审核的公开法务页面，内容由 `operator` 配置段渲染：
+
+```yaml
+operator:
+  name: "Example Operator"
+  legalName: "示例运营主体有限公司"
+  legalNameEn: "Example Operator Ltd."
+  url: "https://operator.example.com"
+  email: "privacy@operator.example.com"
+  siteUrl: "https://api.operator.example.com"
+  registrationId: "91310000MA1FL0000X"
+```
+
+未配置 `operator` 时，页面按模板原样输出 `{{OPERATOR_*}}` 占位符——这是刻意行为：不填写就不会冒用其他公司的法定名称、联系邮箱或注册号，该状态**不可用于提交 Amazon 审核**。
+
 ## 发布门禁
 
 ```bash

@@ -131,3 +131,18 @@ connectedAccount:
   #     # 每项必须在 secret 与 secretFile 之间二选一；示例使用更安全的只读 Secret 文件。
   #     # 文件路径必须为绝对路径、权限为 0600 或更严格；密钥内容需为至少 32 字节的高熵 base64 或 64 位十六进制字符串。
   #     secretFile: "/run/secrets/connected-account-jwt-v1"
+
+# 公开法务页面（/company 与 /privacy）的运营主体信息。
+# 这两个页面会展示给 Amazon 卖家应用审核，自部署时必须填写你自己的主体，
+# 否则页面会保留 {{OPERATOR_*}} 占位符。未配置整段时同样保留占位符，
+# 不会回退到任何其他公司的真实信息。
+# operator:
+#   name: "Example Operator"                     # 品牌/展示名，必填（配置本段时）
+#   legalName: "示例运营主体有限公司"              # 中文法定名称
+#   legalNameEn: "Example Operator Ltd."         # 英文法定名称
+#   url: "https://operator.example.com"          # 主站
+#   wwwUrl: "https://www.operator.example.com"   # 带 www 的主站（用于页脚链接）
+#   email: "privacy@operator.example.com"        # 隐私与数据删除联系人
+#   siteUrl: "https://api.operator.example.com"  # 本服务的公开 Origin（canonical）
+#   initial: "E"                                 # 品牌标初始字母，省略则取 name 首字母
+#   registrationId: "91310000MA1FL0000X"         # 统一社会信用代码/注册号

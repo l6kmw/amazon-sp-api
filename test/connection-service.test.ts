@@ -83,14 +83,14 @@ test("creates and polls an allowed ConnectedAccount authorization intent", async
     store,
     intentStore: intents,
     publicOrigin: "https://api.example.com",
-    allowedConnectedAccountOrigins: ["https://app.connected-account.example"],
+    allowedConnectedAccountOrigins: ["https://app.example.com"],
   });
   await service.createConnectedAccountAuthorizationURL(
     "jwt-employee:issuer:employee-1",
     "att_0123456789abcdef",
-    "https://app.connected-account.example",
+    "https://app.example.com",
   );
-  assert.equal(intents.records.get("intent-1")?.connected-accountOrigin, "https://app.connected-account.example");
+  assert.equal(intents.records.get("intent-1")?.connectedAccountOrigin, "https://app.example.com");
   await service.cancelAuthorizationURL("https://attacker.example/oauth/amazon/start?intent=intent-1");
   assert.ok(intents.records.has("intent-1"));
   assert.equal(

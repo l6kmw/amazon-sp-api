@@ -28,7 +28,7 @@ Queue/Worker 指标：**不适用**（当前无异步队列；引入队列前禁
 
 | 告警 | 表达式（示意） | for | 级别 | 处置 |
 |---|---|---|---|---|
-| AuthFailureRate | `rate(amazon_connected-account_mcp_auth_failures_total[5m]) > 1` | 10m | warning | 检查 `connected-account.jwtKeys`、issuer/audience/kid/Scope 和签发方时钟；确认非攻击 |
+| AuthFailureRate | `rate(amazon_connected-account_mcp_auth_failures_total[5m]) > 1` | 10m | warning | 检查 `connectedAccount.jwtKeys`、issuer/audience/kid/Scope 和签发方时钟；确认非攻击 |
 | AccountAccessRejections | `sum(rate(amazon_connected-account_account_access_rejections_total[5m])) > 0.2` | 15m | warning | 查 Binding/Grant/Credential active 状态；禁止查询或输出 Owner ID |
 | LwaRefreshFailures | `rate(amazon_connected-account_lwa_refresh_total{result="error"}[5m]) > 0.2` | 10m | critical | 查 LWA 凭证与 RT；禁止日志搜 Token |
 | RefreshRotationConflict | `rate(amazon_connected-account_lwa_refresh_rotation_total{error_code="conflict"}[5m]) > 0` | 10m | warning | 检查同 Credential revision 的并发 refresh 和 Redis coordination |
@@ -90,5 +90,5 @@ docker inspect amazon-sp-api \
 
 ## 恢复验证
 
-触发后：修复依赖 → 确认 `/readyz` ready → metrics gauge 恢复 1 → 告警 resolve。  
+触发后：修复依赖 → 确认 `/readyz` ready → metrics gauge 恢复 1 → 告警 resolve。
 演练记录只保留时间戳、告警名、结论。

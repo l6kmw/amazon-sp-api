@@ -5,7 +5,7 @@ import type { ConnectedAccountJwtVerifier } from "../src/connected-account.js";
 import { createAmazonAuthenticator } from "../src/identity.js";
 
 const principal = {
-  issuer: "https://connected-account.example",
+  issuer: "https://example.com",
   employeeId: "employee-1",
   kid: "provider-v1",
   expiresAt: "2026-07-28T10:00:00.000Z",
@@ -16,7 +16,7 @@ const principal = {
 test("accepts only locally verified ConnectedAccount JWT identities", async () => {
   let calls = 0;
   const authenticate = createAmazonAuthenticator({
-    connected-accountVerifier: {
+    connectedAccountVerifier: {
       verify(token: string) {
         calls += 1;
         return token === "valid-connected-account-jwt" ? principal : null;
@@ -24,7 +24,7 @@ test("accepts only locally verified ConnectedAccount JWT identities", async () =
     } as ConnectedAccountJwtVerifier,
   });
   assert.deepEqual(await authenticate("valid-connected-account-jwt"), {
-    authType: "connected-account",
+    authType: "employee_jwt",
     credentialKind: "employee_jwt",
     tenantId: principal.workspaceId,
     issuer: principal.issuer,
@@ -42,7 +42,7 @@ test("routes oat tokens only to the independent Test Agent verifier", async () =
   let jwtCalls = 0;
   let agentCalls = 0;
   const authenticate = createAmazonAuthenticator({
-    connected-accountVerifier: {
+    connectedAccountVerifier: {
       verify() {
         jwtCalls += 1;
         throw new Error("oat token must not reach JWT parsing");
@@ -68,7 +68,7 @@ test("routes oat tokens only to the independent Test Agent verifier", async () =
   assert.equal(jwtCalls, 1);
 });
 
-test("connected-account.enabled=false produces a closed authenticator", async () => {
+test("connectedAccount.enabled=false produces a closed authenticator", async () => {
   const authenticate = createAmazonAuthenticator({});
   assert.equal(await authenticate("anything"), null);
 });

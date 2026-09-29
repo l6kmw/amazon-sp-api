@@ -1,7 +1,7 @@
 import type { ConnectedAccountJwtVerifier } from "./connected-account.js";
 
 export interface ConnectedAccountEmployeePrincipal {
-  authType: "connected-account";
+  authType: "employee_jwt";
   credentialKind?: "employee_jwt";
   tenantId: string;
   issuer: string;
@@ -23,7 +23,7 @@ export interface TestAgentPrincipal {
 export type AmazonPrincipal = ConnectedAccountEmployeePrincipal | TestAgentPrincipal;
 
 export function createAmazonAuthenticator(options: {
-  connected-accountVerifier?: ConnectedAccountJwtVerifier;
+  connectedAccountVerifier?: ConnectedAccountJwtVerifier;
   authenticateTestAgent?: (token: string) => Promise<TestAgentPrincipal | null>;
 }) {
   return async (token: string): Promise<AmazonPrincipal | null> => {
@@ -31,9 +31,9 @@ export function createAmazonAuthenticator(options: {
       if (token.startsWith("oat_")) {
         return await options.authenticateTestAgent?.(token) ?? null;
       }
-      const identity = options.connected-accountVerifier?.verify(token);
+      const identity = options.connectedAccountVerifier?.verify(token);
       return identity ? {
-        authType: "connected-account",
+        authType: "employee_jwt",
         credentialKind: "employee_jwt",
         tenantId: identity.workspaceId,
         issuer: identity.issuer,

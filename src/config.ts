@@ -25,16 +25,16 @@ export interface RuntimeConfig {
   tokenStoreFile: string;
   stateStoreFile: string;
   intentStoreFile: string;
-  connected-accountDatabaseFile: string;
+  connectedAccountDatabaseFile: string;
   sellerCentralManageURL: string;
   databaseUrl?: string;
   postgresPool: { min: number; max: number; idleTimeoutMs: number };
   redisUrl?: string;
   redisNamespace: string;
-  connected-accountEnabled: boolean;
-  connected-accountJwtAudience?: string;
-  connected-accountJwtKeys: ConnectedAccountJwtKey[];
-  connected-accountAllowedOrigins: string[];
+  connectedAccountEnabled: boolean;
+  connectedAccountJwtAudience?: string;
+  connectedAccountJwtKeys: ConnectedAccountJwtKey[];
+  connectedAccountAllowedOrigins: string[];
   adminSessionSecret?: string;
   adminOa?: {
     issuer: string;
@@ -370,7 +370,7 @@ export async function loadConfig(
     );
   }
 
-  const root = exactKeys(draft, ["server", "amazon", "storage", "connected-account", "admin"], "config");
+  const root = exactKeys(draft, ["server", "amazon", "storage", "connectedAccount", "admin"], "config");
   const server = exactKeys(root.server, ["host", "allowedHosts"], "server");
   const amazon = exactKeys(root.amazon, [
     "publicOrigin", "successRedirectUri", "applicationId", "authorizationUri",
@@ -378,9 +378,9 @@ export async function loadConfig(
   ], "amazon");
   const lwa = exactKeys(amazon.lwa, ["clientId", "clientSecret"], "amazon.lwa");
   const storage = exactKeys(root.storage, ["dataDirectory", "postgres", "redis"], "storage");
-  const connected-account = optionalSection(root.connected-account, [
+  const connectedAccount = optionalSection(root.connectedAccount, [
     "enabled", "audience", "allowedOrigins", "jwtKeys",
-  ], "connected-account");
+  ], "connectedAccount");
   const admin = optionalSection(root.admin, ["sessionSecretFile", "oa"], "admin");
   const adminOa = optionalSection(admin.oa, [
     "issuer", "clientId", "clientSecretFile", "subject", "scopes",
@@ -516,34 +516,34 @@ export async function loadConfig(
   }
 
   // ConnectedAccount
-  const connected-accountEnabled = boolean(connected-account.enabled, "connected-account.enabled", false);
-  let connected-accountAudience = "";
-  let connected-accountOrigins = [];
-  let connected-accountJwtKeys = [];
-  if (connected-accountEnabled) {
+  const connectedAccountEnabled = boolean(connectedAccount.enabled, "connectedAccount.enabled", false);
+  let connectedAccountAudience = "";
+  let connectedAccountOrigins = [];
+  let connectedAccountJwtKeys = [];
+  if (connectedAccountEnabled) {
     if (!postgresUrl || !redisUrl) {
-      throw new ConfigurationError("connected-account.enabled", "requires storage.postgres and storage.redis");
+      throw new ConfigurationError("connectedAccount.enabled", "requires storage.postgres and storage.redis");
     }
-    connected-accountAudience = string(connected-account.audience, "connected-account.audience", { min: 3, max: 256 });
-    connected-accountOrigins = stringList(connected-account.allowedOrigins, "connected-account.allowedOrigins", { nonEmpty: true, maxItems: 20 })
-      .map((item, index) => exactOrigin(item, `connected-account.allowedOrigins[${index}]`, { requireHttps: true }));
-    if (!Array.isArray(connected-account.jwtKeys) || connected-account.jwtKeys.length === 0) {
-      throw new ConfigurationError("connected-account.jwtKeys", "must be a non-empty list");
+    connectedAccountAudience = string(connectedAccount.audience, "connectedAccount.audience", { min: 3, max: 256 });
+    connectedAccountOrigins = stringList(connectedAccount.allowedOrigins, "connectedAccount.allowedOrigins", { nonEmpty: true, maxItems: 20 })
+      .map((item, index) => exactOrigin(item, `connectedAccount.allowedOrigins[${index}]`, { requireHttps: true }));
+    if (!Array.isArray(connectedAccount.jwtKeys) || connectedAccount.jwtKeys.length === 0) {
+      throw new ConfigurationError("connectedAccount.jwtKeys", "must be a non-empty list");
     }
     const kids = new Set();
-    for (const [index, item] of connected-account.jwtKeys.entries()) {
-      const entry = exactKeys(item, ["kid", "issuer", "secret", "secretFile"], `connected-account.jwtKeys[${index}]`);
-      const kid = string(entry.kid, `connected-account.jwtKeys[${index}].kid`, { max: 128 });
+    for (const [index, item] of connectedAccount.jwtKeys.entries()) {
+      const entry = exactKeys(item, ["kid", "issuer", "secret", "secretFile"], `connectedAccount.jwtKeys[${index}]`);
+      const kid = string(entry.kid, `connectedAccount.jwtKeys[${index}].kid`, { max: 128 });
       if (!/^[A-Za-z0-9._-]{1,128}$/.test(kid)) {
-        throw new ConfigurationError(`connected-account.jwtKeys[${index}].kid`, "is invalid");
+        throw new ConfigurationError(`connectedAccount.jwtKeys[${index}].kid`, "is invalid");
       }
       if (kids.has(kid)) {
-        throw new ConfigurationError(`connected-account.jwtKeys[${index}].kid`, "is duplicated");
+        throw new ConfigurationError(`connectedAccount.jwtKeys[${index}].kid`, "is duplicated");
       }
       kids.add(kid);
-      const issuer = string(entry.issuer, `connected-account.jwtKeys[${index}].issuer`, { max: 512 });
-      const secret = await secretFromInlineOrFile(entry, `connected-account.jwtKeys[${index}]`);
-      connected-accountJwtKeys.push({ kid, issuer, secret });
+      const issuer = string(entry.issuer, `connectedAccount.jwtKeys[${index}].issuer`, { max: 512 });
+      const secret = await secretFromInlineOrFile(entry, `connectedAccount.jwtKeys[${index}]`);
+      connectedAccountJwtKeys.push({ kid, issuer, secret });
     }
   }
 
@@ -566,16 +566,16 @@ export async function loadConfig(
     tokenStoreFile: `${baseDataDirectory}/tokens.json`,
     stateStoreFile: `${baseDataDirectory}/states.json`,
     intentStoreFile: `${baseDataDirectory}/intents.json`,
-    connected-accountDatabaseFile: `${baseDataDirectory}/connected-account.sqlite`,
+    connectedAccountDatabaseFile: `${baseDataDirectory}/connected-account.sqlite`,
     sellerCentralManageURL: new URL("/apps/manage", authorizationUri).toString(),
     databaseUrl: postgresUrl || undefined,
     postgresPool,
     redisUrl: redisUrl || undefined,
     redisNamespace,
-    connected-accountEnabled,
-    connected-accountJwtAudience: connected-accountAudience || undefined,
-    connected-accountJwtKeys,
-    connected-accountAllowedOrigins: connected-accountOrigins,
+    connectedAccountEnabled,
+    connectedAccountJwtAudience: connectedAccountAudience || undefined,
+    connectedAccountJwtKeys,
+    connectedAccountAllowedOrigins: connectedAccountOrigins,
     adminSessionSecret: adminSessionSecret || undefined,
     adminOa: parsedAdminOa,
   };

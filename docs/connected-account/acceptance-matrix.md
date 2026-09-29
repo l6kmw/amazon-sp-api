@@ -62,7 +62,7 @@
 
 ## 阻断上线条件
 
-以下任一项失败时，`connected-account.enabled` 必须保持 `false`：
+以下任一项失败时，`connectedAccount.enabled` 必须保持 `false`：
 
 - 可通过输入 tenant、user、employee 或 account 绕过当前 Employee 范围。
 - JWT 签名、kid、issuer、audience、时间或 Scope 校验不完整。

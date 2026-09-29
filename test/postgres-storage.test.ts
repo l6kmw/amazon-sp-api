@@ -14,10 +14,10 @@ import { AdminAuditService, registerAdminAuditRoutes } from "../src/admin-audit.
 import { initializeAdmin, verifyAdminPassword } from "../src/admin-auth.js";
 import { registerAdminDashboardRoutes } from "../src/admin-dashboard.js";
 import { AdminSessionManager } from "../src/admin-session.js";
-import { ConnectedAccountAccountError, type ConnectedAccountPrincipal } from "../src/connected-account-accounts.js";
+import { ConnectedAccountError, type ConnectedAccountPrincipal } from "../src/connected-accounts.js";
 import { createAmazonAuthenticator } from "../src/identity.js";
 import { backfillPostgresAccountLifecycle } from "../src/postgres-backfill.js";
-import { PostgresConnectedAccountAccountStore } from "../src/postgres-connected-account-accounts.js";
+import { PostgresConnectedAccountStore } from "../src/postgres-connected-accounts.js";
 import { migratePostgres } from "../src/postgres-migrations.js";
 import { PostgresRefreshTokenStore } from "../src/postgres-token-store.js";
 
@@ -26,7 +26,7 @@ const encryptionKey = Buffer.alloc(32, 7);
 
 function principal(employeeId: string): ConnectedAccountPrincipal {
   return {
-    authType: "connected-account",
+    authType: "employee_jwt",
     tenantId: `jwt-employee:example-issuer-prod:${employeeId}`,
     issuer: "example-issuer-prod",
     employeeId,
@@ -73,17 +73,17 @@ test("shares ConnectedAccount ownership and encrypted tokens through PostgreSQL"
       return true;
     },
   };
-  const first = new PostgresConnectedAccountAccountStore({
+  const first = new PostgresConnectedAccountStore({
     databaseUrl,
     oauth,
-    authorizationOrigin: "https://app.connected-account.example",
+    authorizationOrigin: "https://app.example.com",
     adminAuthorizationOrigin: "https://admin.amazon.example",
     now: () => new Date("2026-07-22T01:00:00.000Z"),
   });
-  const second = new PostgresConnectedAccountAccountStore({
+  const second = new PostgresConnectedAccountStore({
     databaseUrl,
     oauth,
-    authorizationOrigin: "https://app.connected-account.example",
+    authorizationOrigin: "https://app.example.com",
     now: () => new Date("2026-07-22T01:00:00.000Z"),
   });
   try {
@@ -120,7 +120,7 @@ test("shares ConnectedAccount ownership and encrypted tokens through PostgreSQL"
       await adminClient.query("BEGIN");
       await assert.rejects(
         first.adminCreateAuthorizationAttempt(employee.issuer, "unknown-employee", "admin", adminClient),
-        (error: unknown) => error instanceof ConnectedAccountAccountError && error.status === 404,
+        (error: unknown) => error instanceof ConnectedAccountError && error.status === 404,
       );
       await adminClient.query("ROLLBACK");
     } finally {
@@ -152,7 +152,7 @@ test("shares ConnectedAccount ownership and encrypted tokens through PostgreSQL"
     );
     await assert.rejects(
       second.resolveAccount(principal("employee-2"), accountId),
-      (error: unknown) => error instanceof ConnectedAccountAccountError && error.status === 404,
+      (error: unknown) => error instanceof ConnectedAccountError && error.status === 404,
     );
     const encryptedToken = encrypted("refresh-token");
     await admin.query(`
@@ -206,7 +206,7 @@ test("shares ConnectedAccount ownership and encrypted tokens through PostgreSQL"
     assert.equal((await second.refreshAccounts(sharedEmployee))[0]?.remark, "共享员工");
     await assert.rejects(
       second.resolveAccount(unboundEmployee, accountId),
-      (error: unknown) => error instanceof ConnectedAccountAccountError && error.status === 404,
+      (error: unknown) => error instanceof ConnectedAccountError && error.status === 404,
     );
     await second.unbindAccount(sharedEmployee, connectionId);
     assert.equal((await first.resolveAccount(employee, accountId)).externalAccountId, "A1POSTGRES");
@@ -228,7 +228,7 @@ test("shares ConnectedAccount ownership and encrypted tokens through PostgreSQL"
       await bindingClient.query("BEGIN");
       await assert.rejects(
         first.adminUnshareAccount(employee.issuer, employee.employeeId, connectionId, bindingClient),
-        (error: unknown) => error instanceof ConnectedAccountAccountError && error.status === 404,
+        (error: unknown) => error instanceof ConnectedAccountError && error.status === 404,
       );
       await bindingClient.query("ROLLBACK");
     } finally {
@@ -239,11 +239,11 @@ test("shares ConnectedAccount ownership and encrypted tokens through PostgreSQL"
       first.shareAccount(employee, connectionId, {
         ...sharedEmployee, issuer: "another-issuer",
       }),
-      (error: unknown) => error instanceof ConnectedAccountAccountError && error.status === 404,
+      (error: unknown) => error instanceof ConnectedAccountError && error.status === 404,
     );
     await assert.rejects(
       second.disconnect(sharedEmployee, connectionId),
-      (error: unknown) => error instanceof ConnectedAccountAccountError && error.status === 404,
+      (error: unknown) => error instanceof ConnectedAccountError && error.status === 404,
     );
     await Promise.all([
       first.disconnect(employee, connectionId),
@@ -256,7 +256,7 @@ test("shares ConnectedAccount ownership and encrypted tokens through PostgreSQL"
     for (const actor of [employee, sharedEmployee]) {
       await assert.rejects(
         first.resolveAccount(actor, accountId),
-        (error: unknown) => error instanceof ConnectedAccountAccountError && error.status === 404,
+        (error: unknown) => error instanceof ConnectedAccountError && error.status === 404,
       );
     }
     const tokens = new PostgresRefreshTokenStore({
@@ -349,9 +349,9 @@ test("completes admin-started OAuth as an Employee-owned bound grant", {
   await migratePostgres(pool);
   const owner = principal("admin-selected-owner");
   const completions = new Map<string, { sellingPartnerId: string; authorizedAt: string }>();
-  const store = new PostgresConnectedAccountAccountStore({
+  const store = new PostgresConnectedAccountStore({
     pool,
-    authorizationOrigin: "https://app.connected-account.example",
+    authorizationOrigin: "https://app.example.com",
     adminAuthorizationOrigin: "https://admin.amazon.example",
     oauth: {
       async createConnectedAccountAuthorizationURL(_tenantId: string, attemptId: string) {
@@ -451,10 +451,10 @@ test("reuses one issuer-scoped account while isolating owner credentials", {
     credentialOwnerId: string;
     sellingPartnerId: string;
   }> = [];
-  const accounts = new PostgresConnectedAccountAccountStore({
+  const accounts = new PostgresConnectedAccountStore({
     databaseUrl,
     oauth,
-    authorizationOrigin: "https://app.connected-account.example",
+    authorizationOrigin: "https://app.example.com",
     invalidateCredential(credentialId, revision, credentialOwnerId, sellingPartnerId) {
       invalidated.push({ credentialId, revision, credentialOwnerId, sellingPartnerId });
     },
@@ -473,7 +473,7 @@ test("reuses one issuer-scoped account while isolating owner credentials", {
       const attempt = await accounts.createAuthorizationAttempt(owner);
       await tokens.save("A1INDEPENDENT", owner.tenantId, {
         refresh_token: `refresh-${index + 1}`,
-      }, { connected-accountAttemptId: attempt.attemptId });
+      }, { connectedAccountAttemptId: attempt.attemptId });
       completions.set(attempt.attemptId, {
         sellingPartnerId: "A1INDEPENDENT",
         authorizedAt: "2026-07-22T01:01:00.000Z",
@@ -510,7 +510,7 @@ test("reuses one issuer-scoped account while isolating owner credentials", {
     );
     await assert.rejects(
       policy.resolveAccount(principal("unbound-employee"), completed[0]!.connection!.metadata.account_id),
-      (error: unknown) => error instanceof ConnectedAccountAccountError && error.status === 404,
+      (error: unknown) => error instanceof ConnectedAccountError && error.status === 404,
     );
     const testAgent = {
       authType: "test_agent" as const,
@@ -810,7 +810,7 @@ test("serves admin account views from the migrated PostgreSQL schema", {
       }),
       toolCount: 30,
       mcpEndpoint: "/mcp",
-      connected-accountKeyringConfigured: true,
+      connectedAccountKeyringConfigured: true,
     });
     server = app.listen(0, "127.0.0.1");
     await new Promise<void>((resolve, reject) => {
@@ -886,7 +886,7 @@ test("serves admin account views from the migrated PostgreSQL schema", {
       postgres_status: "ok",
       redis_status: "ok",
       credential_keyring_status: "ok",
-      connected-account_keyring_status: "ok",
+      connected_account_keyring_status: "ok",
     });
   } finally {
     if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));

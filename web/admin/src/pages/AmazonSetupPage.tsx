@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import styled from '@emotion/styled'
 import { getAmazonConfigStatus } from '../api/dashboard'
-import { listConnectedAccountEmployees } from '../api/connected-accountEmployees'
+import { listConnectedAccountEmployees } from '../api/connectedAccountEmployees'
 import { createAuthorizationAttempt, getAuthorizationAttempt } from '../api/authorizationAttempts'
 import type { AmazonConfigStatus, AuthorizationAttempt, ConnectedAccountEmployee } from '../api/types'
 import { Button } from '../components/Button'

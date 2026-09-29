@@ -9,7 +9,7 @@ interface Migration {
 const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
-    name: "baseline_oauth_and_connected-account_accounts",
+    name: "baseline_oauth_and_connected_accounts",
     sql: `
       CREATE TABLE IF NOT EXISTS amazon_sp_api.oauth_connection (
         selling_partner_id TEXT PRIMARY KEY,
@@ -17,7 +17,7 @@ const MIGRATIONS: readonly Migration[] = [
         authorized_at TIMESTAMPTZ NOT NULL,
         refresh_token JSONB,
         token_type TEXT NOT NULL,
-        connected-account_attempt_id TEXT,
+        connected_account_attempt_id TEXT,
         credential_revision BIGINT NOT NULL DEFAULT 1,
         status TEXT NOT NULL CHECK (status IN ('active', 'disconnected')),
         created_at TIMESTAMPTZ NOT NULL,
@@ -25,9 +25,9 @@ const MIGRATIONS: readonly Migration[] = [
       );
       ALTER TABLE amazon_sp_api.oauth_connection
         ADD COLUMN IF NOT EXISTS credential_revision BIGINT NOT NULL DEFAULT 1;
-      CREATE UNIQUE INDEX IF NOT EXISTS oauth_connection_connected-account_attempt_idx
-        ON amazon_sp_api.oauth_connection (tenant_id, connected-account_attempt_id)
-        WHERE connected-account_attempt_id IS NOT NULL AND status = 'active';
+      CREATE UNIQUE INDEX IF NOT EXISTS oauth_connection_connected_account_attempt_idx
+        ON amazon_sp_api.oauth_connection (tenant_id, connected_account_attempt_id)
+        WHERE connected_account_attempt_id IS NOT NULL AND status = 'active';
 
       CREATE TABLE IF NOT EXISTS amazon_sp_api.employee_registry (
         issuer TEXT NOT NULL,

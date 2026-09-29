@@ -242,7 +242,7 @@ storage:
   redis:
     url: "redis://127.0.0.1:${redisPort}"
     namespace: "amazon-m6"
-connected-account:
+connectedAccount:
   enabled: false
 admin:
   sessionSecretFile: "${sessionSecret}"
@@ -306,7 +306,7 @@ admin:
     await seed.query(`
       INSERT INTO amazon_sp_api.employee_registry
         (issuer, employee_id, workspace_id, first_seen_at, last_seen_at)
-      VALUES ('https://connected-account.m6.test', 'employee-m6', 'workspace-m6', NOW(), NOW())
+      VALUES ('https://connectedAccount.m6.test', 'employee-m6', 'workspace-m6', NOW(), NOW())
     `);
   } finally {
     await seed.end();

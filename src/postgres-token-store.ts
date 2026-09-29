@@ -55,20 +55,20 @@ export class PostgresRefreshTokenStore implements ConnectionStore {
     sellingPartnerId: string,
     tenantId: string,
     tokenResponse: { refresh_token: string; token_type?: string },
-    metadata: { connected-accountAttemptId?: string } = {},
+    metadata: { connectedAccountAttemptId?: string } = {},
   ): Promise<void> {
     const now = new Date();
     const result = await this.#pool.query(`
       WITH saved AS (
         INSERT INTO amazon_sp_api.oauth_connection
           (selling_partner_id, tenant_id, authorized_at, refresh_token, token_type,
-           connected-account_attempt_id, status, created_at, updated_at)
+           connected_account_attempt_id, status, created_at, updated_at)
         VALUES ($1, $2, $3, $4, $5, $6, 'active', $3, $3)
         ON CONFLICT (selling_partner_id, tenant_id) DO UPDATE SET
           authorized_at = EXCLUDED.authorized_at,
           refresh_token = EXCLUDED.refresh_token,
           token_type = EXCLUDED.token_type,
-          connected-account_attempt_id = EXCLUDED.connected-account_attempt_id,
+          connected_account_attempt_id = EXCLUDED.connected_account_attempt_id,
           credential_revision = amazon_sp_api.oauth_connection.credential_revision + 1,
           status = 'active',
           updated_at = EXCLUDED.updated_at
@@ -100,7 +100,7 @@ export class PostgresRefreshTokenStore implements ConnectionStore {
       now,
       encryptSecret(tokenResponse.refresh_token, this.#keyring, sellingPartnerId),
       tokenResponse.token_type || "bearer",
-      metadata.connected-accountAttemptId || null,
+      metadata.connectedAccountAttemptId || null,
     ]);
     if ((result.rowCount ?? 0) === 0) throw new ConnectionConflictError();
   }
@@ -117,13 +117,13 @@ export class PostgresRefreshTokenStore implements ConnectionStore {
           WITH saved AS (
             INSERT INTO amazon_sp_api.oauth_connection
               (selling_partner_id, tenant_id, authorized_at, refresh_token, token_type,
-               connected-account_attempt_id, status, created_at, updated_at)
+               connected_account_attempt_id, status, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, 'active', $3, $3)
             ON CONFLICT (selling_partner_id, tenant_id) DO UPDATE SET
                   authorized_at = EXCLUDED.authorized_at,
               refresh_token = EXCLUDED.refresh_token,
               token_type = EXCLUDED.token_type,
-              connected-account_attempt_id = EXCLUDED.connected-account_attempt_id,
+              connected_account_attempt_id = EXCLUDED.connected_account_attempt_id,
               status = 'active',
               updated_at = EXCLUDED.updated_at
             RETURNING *
@@ -154,7 +154,7 @@ export class PostgresRefreshTokenStore implements ConnectionStore {
           token.authorizedAt,
           token.refreshToken,
           token.tokenType || "bearer",
-          token.connected-accountAttemptId || null,
+          token.connectedAccountAttemptId || null,
         ]);
         if ((result.rowCount ?? 0) === 0) throw new ConnectionConflictError();
       }
@@ -184,7 +184,7 @@ export class PostgresRefreshTokenStore implements ConnectionStore {
     const result = await this.#pool.query(`
       WITH disconnected AS (
         UPDATE amazon_sp_api.oauth_connection
-        SET status = 'disconnected', refresh_token = NULL, connected-account_attempt_id = NULL,
+        SET status = 'disconnected', refresh_token = NULL, connected_account_attempt_id = NULL,
             updated_at = NOW()
         WHERE tenant_id = $1 AND selling_partner_id = $2 AND status = 'active'
         RETURNING *
@@ -211,7 +211,7 @@ export class PostgresRefreshTokenStore implements ConnectionStore {
     const result = await this.#pool.query(`
       SELECT selling_partner_id, authorized_at
       FROM amazon_sp_api.oauth_connection
-      WHERE tenant_id = $1 AND connected-account_attempt_id = $2 AND status = 'active'
+      WHERE tenant_id = $1 AND connected_account_attempt_id = $2 AND status = 'active'
     `, [tenantId, attemptId]);
     const row = result.rows[0];
     return row ? {

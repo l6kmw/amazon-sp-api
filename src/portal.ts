@@ -8,10 +8,10 @@ export interface AmazonPortalOptions {
   publicOrigin: string;
   version: string;
   toolCount: number;
-  connected-accountEnabled: boolean;
-  connected-accountAudience?: string;
-  connected-accountOrigins: string[];
-  connected-accountJwtKeys: Array<{ kid: string; issuer: string }>;
+  connectedAccountEnabled: boolean;
+  connectedAccountAudience?: string;
+  connectedAccountOrigins: string[];
+  connectedAccountJwtKeys: Array<{ kid: string; issuer: string }>;
 }
 
 function setPortalSecurityHeaders(response: Response): void {
@@ -32,7 +32,7 @@ function setPortalSecurityHeaders(response: Response): void {
 
 export function publicAmazonPortalConfig(options: AmazonPortalOptions) {
   const providerBaseUrl = new URL("/connected-account/v1/", options.publicOrigin).toString();
-  const connected-accountOrigin = options.connected-accountOrigins[0];
+  const connectedAccountOrigin = options.connectedAccountOrigins[0];
   return {
     service: {
       name: "Amazon SP-API",
@@ -51,18 +51,18 @@ export function publicAmazonPortalConfig(options: AmazonPortalOptions) {
       sellerCentralManageUrl: "https://sellercentral.amazon.com/apps/manage",
     },
     provider: {
-      enabled: options.connected-accountEnabled,
+      enabled: options.connectedAccountEnabled,
       discoveryUrl: new URL(
         "/.well-known/connected-account",
         options.publicOrigin,
       ).toString(),
       apiBaseUrl: providerBaseUrl,
       authCheckUrl: new URL("auth/check", providerBaseUrl).toString(),
-      audience: options.connected-accountAudience ?? "",
-      jwtKeys: options.connected-accountJwtKeys,
+      audience: options.connectedAccountAudience ?? "",
+      jwtKeys: options.connectedAccountJwtKeys,
       requiredScopes: [...CONNECTED_ACCOUNT_PROTOCOL_SCOPES],
-      employeeConsoleUrl: connected-accountOrigin
-        ? new URL("/employees", connected-accountOrigin).toString()
+      employeeConsoleUrl: connectedAccountOrigin
+        ? new URL("/employees", connectedAccountOrigin).toString()
         : "",
     },
   };

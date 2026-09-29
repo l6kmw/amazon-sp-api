@@ -8,8 +8,8 @@ export interface ConnectedAccountAuthorizationCompletion extends AmazonConnectio
 export interface AuthorizationIntent {
   expiresAt?: number;
   tenantId: string;
-  connected-accountAttemptId?: string;
-  connected-accountOrigin?: string;
+  connectedAccountAttemptId?: string;
+  connectedAccountOrigin?: string;
 }
 
 interface CachedConnections {
@@ -82,8 +82,8 @@ export class ConnectionService {
     }
     const intentId = await this.#intentStore.create({
       tenantId: validateTenantId(tenantId),
-      connected-accountAttemptId: validateAttemptId(attemptId),
-      connected-accountOrigin: normalizedOrigin,
+      connectedAccountAttemptId: validateAttemptId(attemptId),
+      connectedAccountOrigin: normalizedOrigin,
     });
     return this.#startURL(intentId, false);
   }

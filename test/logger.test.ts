@@ -17,7 +17,7 @@ test("writes allowlisted structured logs without raw identifiers", () => {
   logger.write("info", "mcp.tool.completed", {
     request_id: "req_fixed_logger_01",
     tool: "amazon_get_order",
-    actor_type: "connected-account",
+    actor_type: "employee_jwt",
     result: "success",
     duration_ms: 12.5,
     tenantHash: logger.hash("tenant-secret"),

@@ -24,9 +24,9 @@ import {
 import { createAmazonMcpServer } from "../src/tools.js";
 
 const principal = {
-  authType: "connected-account" as const,
+  authType: "employee_jwt" as const,
   tenantId: "jwt-employee:workspace",
-  issuer: "https://connected-account.example",
+  issuer: "https://example.com",
   employeeId: "employee-1",
   kid: "provider-v1",
   expiresAt: "2026-07-28T10:00:00.000Z",
@@ -84,8 +84,8 @@ test("MCP accepts independent Test Agent and Employee credentials", async () => 
     allowedHosts: ["127.0.0.1", "localhost"],
     version: "0.1.0",
     toolCount: 30,
-    connected-accountManifest: CONNECTED_ACCOUNT_DISCOVERY_MANIFEST,
-    connected-accountAccounts: {
+    connectedAccountManifest: CONNECTED_ACCOUNT_DISCOVERY_MANIFEST,
+    connectedAccountService: {
       async listAccounts() { return []; },
       async refreshAccounts() { return []; },
       async lookupAccounts() { return []; },
@@ -310,7 +310,7 @@ test("records only authenticated tools/call arguments with isolated request IDs"
         {
           requestId: "req_argument_schema_01",
           tool: "amazon_get_identity",
-          actorType: "connected-account",
+          actorType: "employee_jwt",
           actorIdHash: logger.hash("employee-1"),
           argumentsPresent: true,
           arguments: invalidArguments,
@@ -318,7 +318,7 @@ test("records only authenticated tools/call arguments with isolated request IDs"
         {
           requestId: "req_argument_success_01",
           tool: "amazon_get_identity",
-          actorType: "connected-account",
+          actorType: "employee_jwt",
           actorIdHash: logger.hash("employee-1"),
           argumentsPresent: true,
           arguments: successArguments,
@@ -363,7 +363,7 @@ test("records only authenticated tools/call arguments with isolated request IDs"
       {
         requestId: "req_argument_null_01",
         tool: "amazon_get_identity",
-        actorType: "connected-account",
+        actorType: "employee_jwt",
         actorIdHash: logger.hash("employee-1"),
         argumentsPresent: true,
         arguments: null,
@@ -374,7 +374,7 @@ test("records only authenticated tools/call arguments with isolated request IDs"
       {
         requestId: "req_argument_missing_01",
         tool: "amazon_get_identity",
-        actorType: "connected-account",
+        actorType: "employee_jwt",
         actorIdHash: logger.hash("employee-1"),
         argumentsPresent: false,
         arguments: undefined,
@@ -409,7 +409,7 @@ test("records only authenticated tools/call arguments with isolated request IDs"
     );
     assert.ok(batchRecords.every((record) =>
       record.tool === "amazon_get_identity"
-      && record.actorType === "connected-account"
+      && record.actorType === "employee_jwt"
       && record.actorIdHash === logger.hash("employee-1")
       && record.argumentsPresent));
 
@@ -541,7 +541,7 @@ test("keeps tools/call available when argument logging rejects", async () => {
     const failure = records.find((record) => record.event === "mcp.argument_log.failed");
     assert.equal(failure?.request_id, "req_argument_disk_failure_01");
     assert.equal(failure?.tool, "amazon_get_identity");
-    assert.equal(failure?.actor_type, "connected-account");
+    assert.equal(failure?.actor_type, "employee_jwt");
     assert.equal(failure?.actor_id_hash, logger.hash("employee-1"));
     assert.equal(failure?.result, "error");
     assert.equal(failure?.error_code, "internal_error");
@@ -629,7 +629,7 @@ test("records MCP isError responses as tool failures even when HTTP stays 200", 
   }
 });
 
-test("connected-account.enabled=false behavior closes only MCP authentication", async () => {
+test("connectedAccount.enabled=false behavior closes only MCP authentication", async () => {
   const app = createAmazonMcpHttpApp({
     host: "127.0.0.1",
     allowedHosts: ["127.0.0.1", "localhost"],
@@ -680,7 +680,7 @@ test("readiness has no identity dependency and discovery remains unchanged", asy
     allowedHosts: ["127.0.0.1", "localhost"],
     version: "0.1.0",
     toolCount: 30,
-    connected-accountManifest: CONNECTED_ACCOUNT_DISCOVERY_MANIFEST,
+    connectedAccountManifest: CONNECTED_ACCOUNT_DISCOVERY_MANIFEST,
     createServer: () => createAmazonMcpServer({ async get() { return {}; } }),
     readinessCheck: readiness,
   });
@@ -717,10 +717,10 @@ test("exposes secret-free Amazon integration metadata without a frontend", async
       publicOrigin: "https://api.example.com",
       version: "0.1.0",
       toolCount: 30,
-      connected-accountEnabled: true,
-      connected-accountAudience: "amazon-sp-api-account-service",
-      connected-accountOrigins: ["https://www.connected-account.me"],
-      connected-accountJwtKeys: [{ kid: "provider-v1", issuer: "https://connected-account.example" }],
+      connectedAccountEnabled: true,
+      connectedAccountAudience: "amazon-sp-api-account-service",
+      connectedAccountOrigins: ["https://www.connectedaccount.me"],
+      connectedAccountJwtKeys: [{ kid: "provider-v1", issuer: "https://example.com" }],
     },
   });
   const { server, origin } = await listen(app);
@@ -738,7 +738,7 @@ test("exposes secret-free Amazon integration metadata without a frontend", async
       headerName: "Authorization",
       headerTemplate: "Bearer <CONNECTED_ACCOUNT_JWT>",
     });
-    assert.equal(body.provider.employeeConsoleUrl, "https://www.connected-account.me/employees");
+    assert.equal(body.provider.employeeConsoleUrl, "https://www.connectedaccount.me/employees");
     assert.equal(body.provider.jwtKeys[0].kid, "provider-v1");
     assert.doesNotMatch(JSON.stringify(body), /clientSecret|lwaClient|sellingPartner|credentialKey/i);
 
@@ -837,10 +837,10 @@ test("redacts integration readiness details and fails closed", async () => {
         publicOrigin: "https://api.example.com",
         version: "0.1.0",
         toolCount: 30,
-        connected-accountEnabled: true,
-        connected-accountAudience: "amazon-sp-api-account-service",
-        connected-accountOrigins: ["https://www.connected-account.me"],
-        connected-accountJwtKeys: [{ kid: "provider-v1", issuer: "https://connected-account.example" }],
+        connectedAccountEnabled: true,
+        connectedAccountAudience: "amazon-sp-api-account-service",
+        connectedAccountOrigins: ["https://www.connectedaccount.me"],
+        connectedAccountJwtKeys: [{ kid: "provider-v1", issuer: "https://example.com" }],
       },
     });
     const { server, origin } = await listen(app);

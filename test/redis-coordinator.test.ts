@@ -59,8 +59,8 @@ test("coordinates LWA exchange and invalidation across instances with Redis", {
       second.getAccessToken("A1REDIS", "employee-b-workspace"),
     ]), ["shared-access-1", "shared-access-1"]);
     assert.equal(exchanges, 1);
-    assert.match(mcpMetrics.renderPrometheus(), /amazon_connected-account_redis_lwa_lock_total\{result="rejected"\} 1/);
-    assert.match(mcpMetrics.renderPrometheus(), /amazon_connected-account_redis_lwa_lock_wait_seconds_count\{result="rejected"\} 1/);
+    assert.match(mcpMetrics.renderPrometheus(), /amazon_connected_account_redis_lwa_lock_total\{result="rejected"\} 1/);
+    assert.match(mcpMetrics.renderPrometheus(), /amazon_connected_account_redis_lwa_lock_wait_seconds_count\{result="rejected"\} 1/);
 
     assert.equal(
       await second.getAccessToken("A1REDIS", "employee-b-workspace", true),

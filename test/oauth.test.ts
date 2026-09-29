@@ -49,13 +49,13 @@ async function context(exchangeCode: Parameters<typeof createAmazonOAuthRouter>[
     tokenStoreFile: join(directory, "tokens.json"),
     stateStoreFile: join(directory, "states.json"),
     intentStoreFile: join(directory, "intents.json"),
-    connected-accountDatabaseFile: join(directory, "connected-account.sqlite"),
+    connectedAccountDatabaseFile: join(directory, "connected-account.sqlite"),
     sellerCentralManageURL: "https://sellercentral-europe.amazon.com/apps/manage",
     postgresPool: { min: 0, max: 10, idleTimeoutMs: 10_000 },
     redisNamespace: "amazon-sp-api",
-    connected-accountEnabled: false,
-    connected-accountJwtKeys: [],
-    connected-accountAllowedOrigins: ["https://app.connected-account.example"],
+    connectedAccountEnabled: false,
+    connectedAccountJwtKeys: [],
+    connectedAccountAllowedOrigins: ["https://app.example.com"],
   } satisfies RuntimeConfig;
   const connectionStore = new EncryptedFileTokenStore({
     file: config.tokenStoreFile,
@@ -71,7 +71,7 @@ async function context(exchangeCode: Parameters<typeof createAmazonOAuthRouter>[
     store: connectionStore,
     intentStore,
     publicOrigin: config.publicOrigin,
-    allowedConnectedAccountOrigins: config.connected-accountAllowedOrigins,
+    allowedConnectedAccountOrigins: config.connectedAccountAllowedOrigins,
   });
   const app = createAmazonMcpHttpApp({
     host: config.host,

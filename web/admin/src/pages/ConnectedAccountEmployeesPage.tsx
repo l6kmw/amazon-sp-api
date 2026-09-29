@@ -4,7 +4,7 @@ import {
   listConnectedAccountEmployees,
   listEmployeeSellerBindings,
   unbindEmployeeSeller
-} from '../api/connected-accountEmployees'
+} from '../api/connectedAccountEmployees'
 import type { AccountBinding, ConnectedAccountEmployee } from '../api/types'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'

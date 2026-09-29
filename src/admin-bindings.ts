@@ -3,11 +3,11 @@ import type { Express, Request, Response } from "express";
 import { authorizeAdminControl, type AdminAgentService } from "./admin-agents.js";
 import { auditRequest, type AdminAuditService, type AuditEvent } from "./admin-audit.js";
 import type { AdminSessionManager } from "./admin-session.js";
-import { ConnectedAccountAccountError } from "./connected-account-accounts.js";
+import { ConnectedAccountError } from "./connected-accounts.js";
 import type {
   AdminAuthorizationAttempt,
-  PostgresConnectedAccountAccountStore,
-} from "./postgres-connected-account-accounts.js";
+  PostgresConnectedAccountStore,
+} from "./postgres-connected-accounts.js";
 
 function body(request: Request): { issuer: string; connectionId: string } | null {
   if (typeof request.body !== "object" || request.body === null || Array.isArray(request.body)) return null;
@@ -64,7 +64,7 @@ function event(
 }
 
 function failure(response: Response, error: unknown): void {
-  if (error instanceof ConnectedAccountAccountError) {
+  if (error instanceof ConnectedAccountError) {
     response.status(error.status).json({ error: { code: error.code, message: error.message } });
     return;
   }
@@ -76,9 +76,9 @@ export function registerAdminBindingRoutes(
   sessions: AdminSessionManager,
   agents: AdminAgentService,
   audits: AdminAuditService,
-  accounts: PostgresConnectedAccountAccountStore,
+  accounts: PostgresConnectedAccountStore,
 ): void {
-  const classify = (error: unknown) => error instanceof ConnectedAccountAccountError
+  const classify = (error: unknown) => error instanceof ConnectedAccountError
     ? { result: "denied" as const, errorCode: error.code }
     : { result: "failed" as const, errorCode: "internal_error" };
 

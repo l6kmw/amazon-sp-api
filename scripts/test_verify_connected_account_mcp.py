@@ -16,15 +16,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-SCRIPT_PATH = Path(__file__).with_name("verify_connected-account_account_mcp.py")
-SOURCE_HASH = "cbc6236f52982cf657ebf5ce3a41e71020718499bb9e7fe59a9ed78c674db7c2"
+SCRIPT_PATH = Path(__file__).with_name("verify_connected_account_mcp.py")
+SOURCE_HASH = "c00cc1132db7ad3b9f7582f35ed0df8143672c64956406e0256bb75e751099d3"
 SKILL_SOURCE = (
-    "build-connected-account-account-mcp/scripts/verify_connected-account_account_mcp.py"
+    "build-connected-account-mcp/scripts/verify_connected_account_mcp.py"
 )
 
 
 def load_module():
-    spec = importlib.util.spec_from_file_location("verify_connected-account_account_mcp", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("verify_connected_account_mcp", SCRIPT_PATH)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -58,7 +58,7 @@ class VerifyScriptTests(unittest.TestCase):
         digest = hashlib.sha256(SCRIPT_PATH.read_bytes()).hexdigest()
         self.assertEqual(digest, SOURCE_HASH)
         self.assertTrue(SCRIPT_PATH.is_file())
-        self.assertIn("build-connected-account-account-mcp", SKILL_SOURCE)
+        self.assertIn("build-connected-account-mcp", SKILL_SOURCE)
 
     def test_rejects_base_url_with_userinfo_query_or_fragment(self) -> None:
         cases = [

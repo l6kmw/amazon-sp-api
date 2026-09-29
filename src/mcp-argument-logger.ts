@@ -12,7 +12,7 @@ const LOG_FILE_PATTERN = /^mcp-arguments-(\d{4}-\d{2}-\d{2}T\d{2})\.jsonl$/;
 export interface McpArgumentLogInput {
   requestId: string;
   tool: string;
-  actorType: "connected-account" | "test_agent" | "unknown";
+  actorType: "employee_jwt" | "test_agent" | "unknown";
   actorIdHash?: string;
   argumentsPresent: boolean;
   arguments: unknown;

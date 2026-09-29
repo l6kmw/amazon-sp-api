@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import styled from '@emotion/styled'
 import { disconnectConnection, getAccountDetail, refreshAccount } from '../api/accounts'
-import { listConnectedAccountEmployees, shareEmployeeSeller } from '../api/connected-accountEmployees'
+import { listConnectedAccountEmployees, shareEmployeeSeller } from '../api/connectedAccountEmployees'
 import type { ConnectedAccountEmployee, SellerAccountDetail } from '../api/types'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'

@@ -56,7 +56,7 @@ openssl rand -base64 32
 2. 删除整个 `oauth` 分区，把 `oauth.dataDirectory` 原值移动到 `storage.dataDirectory`。
 3. 删除 `amazon.oauthRedirectUri`；确认 Amazon Portal 登记值等于 `amazon.publicOrigin + /oauth/amazon/callback`。
 4. 将 `amazon.tokenEncryptionKey: <原值>` 改为 `amazon.credentialKeys.currentKeyId: k0`，并把原值放入 `keys` 的 `keyId: k0` 条目；无需重加密现有 Token。
-5. 删除整个 `mcp` 分区，包括 `identityValidationUrl`、`identityHealthUrl`、`enableListingsTools`、`limits`、`cache` 和所有 Legacy Auth 字段。MCP 接受 `connected-account.jwtKeys` 本地验签的 Employee JWT；仅在 PostgreSQL 与私密 `admin.sessionSecretFile` 均配置时，额外接受数据库中 active Test Agent 的独立 `oat_*` Token。
+5. 删除整个 `mcp` 分区，包括 `identityValidationUrl`、`identityHealthUrl`、`enableListingsTools`、`limits`、`cache` 和所有 Legacy Auth 字段。MCP 接受 `connectedAccount.jwtKeys` 本地验签的 Employee JWT；仅在 PostgreSQL 与私密 `admin.sessionSecretFile` 均配置时，额外接受数据库中 active Test Agent 的独立 `oat_*` Token。
 6. 删除 `storage.postgres.schema`；数据库 Schema 固定为 `amazon_sp_api`。
 7. 若启用统一 OA，配置 `admin.oa.issuer/clientId/clientSecretFile/subject`，并在 OA 注册固定回调 `amazon.publicOrigin + /api/v1/admin/oa/callback`。启用后 `POST /api/v1/admin/session` 关闭，不能把本地密码登录作为旁路。
 
@@ -126,7 +126,7 @@ docker compose exec amazon-sp-api sh -c 'test "$(ls /proc/1/task | wc -l)" -ge 1
 
 `/healthz` 应返回 HTTP 200 和 `status/version/tools/lwaConfigured`；`/readyz` 仅在 `lwa`、`tokenStore`、`encryptionKey` 及已配置的 PostgreSQL/Redis 全部正常时返回 200。它不检查外部 identity 端点。
 
-Employee JWT 未启用时，`/mcp` 对 Employee JWT 返回 401；若 PostgreSQL 与私密 `admin.sessionSecretFile` 已配置，数据库中 active Test Agent 的独立 `oat_*` 仍可按 Scope 访问同一 `/mcp`。Employee JWT 启用后必须配置 PostgreSQL、Redis、`connected-account.audience`、HTTPS `allowedOrigins` 和 `jwtKeys`。
+Employee JWT 未启用时，`/mcp` 对 Employee JWT 返回 401；若 PostgreSQL 与私密 `admin.sessionSecretFile` 已配置，数据库中 active Test Agent 的独立 `oat_*` 仍可按 Scope 访问同一 `/mcp`。Employee JWT 启用后必须配置 PostgreSQL、Redis、`connectedAccount.audience`、HTTPS `allowedOrigins` 和 `jwtKeys`。
 
 ## 6. Nginx 切换
 

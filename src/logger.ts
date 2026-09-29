@@ -69,7 +69,7 @@ export const EVENT_FIELD_ALLOWLIST: Readonly<Record<string, readonly string[]>> 
 const TOOL_NAME = /^[A-Za-z0-9_]{1,64}$/;
 const REQUEST_ID = /^[A-Za-z0-9_-]{8,128}$/;
 const KEY_ID = /^[A-Za-z0-9._:-]{1,64}$/;
-const ACTOR_TYPES = new Set(["connected-account", "test_agent", "unknown"]);
+const ACTOR_TYPES = new Set(["employee_jwt", "test_agent", "unknown"]);
 const RESULTS = new Set(["success", "error", "rejected", "timeout"]);
 const METHODS = new Set([
   "initialize",
@@ -264,7 +264,7 @@ export function createStructuredLogger(options: {
 
 export function actorTypeFromAuth(
   authType: string | undefined,
-): "connected-account" | "test_agent" | "unknown" {
-  if (authType === "connected-account" || authType === "test_agent") return authType;
+): "employee_jwt" | "test_agent" | "unknown" {
+  if (authType === "employee_jwt" || authType === "test_agent") return authType;
   return "unknown";
 }

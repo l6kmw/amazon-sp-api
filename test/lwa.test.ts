@@ -280,7 +280,7 @@ test("persists rotated refresh tokens before publishing a new access token", asy
   // Second call uses cache; no extra CAS.
   assert.equal(await provider.getAccessToken("A1SELLER", "user-1"), "access-new");
   assert.equal(cas.length, 1);
-  assert.match(mcpMetrics.renderPrometheus(), /amazon_connected-account_lwa_refresh_rotation_total\{result="success"\} 1/);
+  assert.match(mcpMetrics.renderPrometheus(), /amazon_connected_account_lwa_refresh_rotation_total\{result="success"\} 1/);
 });
 
 test("does not publish access token when refresh token CAS conflicts", async () => {
@@ -310,7 +310,7 @@ test("does not publish access token when refresh token CAS conflicts", async () 
     provider.getAccessToken("A1SELLER", "user-1"),
     (error: unknown) => (error as { code?: string }).code === "UPSTREAM_LWA",
   );
-  assert.match(mcpMetrics.renderPrometheus(), /amazon_connected-account_lwa_refresh_rotation_total\{error_code="conflict",result="error"\} 1/);
+  assert.match(mcpMetrics.renderPrometheus(), /amazon_connected_account_lwa_refresh_rotation_total\{error_code="conflict",result="error"\} 1/);
 });
 
 test("shares one access token by credential identity across bound employee workspaces", async () => {

@@ -16,9 +16,9 @@ import {
 import { createAmazonMcpServer, type AmazonMcpServerOptions } from "../src/tools.js";
 
 const principal = {
-  authType: "connected-account" as const,
+  authType: "employee_jwt" as const,
   tenantId: "jwt-employee:workspace",
-  issuer: "https://connected-account.example",
+  issuer: "https://example.com",
   employeeId: "employee-1",
   kid: "provider-v1",
   expiresAt: "2026-07-28T10:00:00.000Z",
@@ -549,7 +549,7 @@ test("counts account policy rejections without exposing account identity", async
     });
     assert.equal(parseToolError(result).code, "internal_error");
     const metrics = mcpMetrics.renderPrometheus();
-    assert.match(metrics, /amazon_connected-account_account_access_rejections_total\{actor_type="connected-account",error_code="forbidden"\} 1/);
+    assert.match(metrics, /amazon_connected_account_account_access_rejections_total\{actor_type="employee_jwt",error_code="forbidden"\} 1/);
     assert.doesNotMatch(metrics, /acct_ffffffffffffffff|employee-1|workspace/);
   } finally {
     await client.close();

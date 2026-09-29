@@ -1,7 +1,7 @@
 import type { Pool } from "pg";
 
-import type { ConnectedAccountConnectedAccount } from "./connected-account-accounts.js";
-import { ConnectedAccountAccountError } from "./connected-account-accounts.js";
+import type { ConnectedAccountProtocol } from "./connected-accounts.js";
+import { ConnectedAccountError } from "./connected-accounts.js";
 import type { AmazonPrincipal } from "./identity.js";
 import { abortablePoolQuery } from "./postgres-query.js";
 
@@ -16,7 +16,7 @@ interface AccessRow {
 }
 
 export interface AmazonAccountAccess {
-  account: ConnectedAccountConnectedAccount;
+  account: ConnectedAccountProtocol;
   credentialOwnerId: string;
 }
 
@@ -24,7 +24,7 @@ export interface AccountAccessPolicy {
   listAccounts(
     principal: AmazonPrincipal,
     signal?: AbortSignal,
-  ): Promise<ConnectedAccountConnectedAccount[]>;
+  ): Promise<ConnectedAccountProtocol[]>;
   resolveAccount(
     principal: AmazonPrincipal,
     accountId: string,
@@ -32,7 +32,7 @@ export interface AccountAccessPolicy {
   ): Promise<AmazonAccountAccess>;
 }
 
-function account(row: AccessRow): ConnectedAccountConnectedAccount {
+function account(row: AccessRow): ConnectedAccountProtocol {
   return {
     connectionId: row.connection_id,
     externalAccountId: row.selling_partner_id,
@@ -53,8 +53,8 @@ export class PostgresAccountAccessPolicy implements AccountAccessPolicy {
   async listAccounts(
     principal: AmazonPrincipal,
     signal?: AbortSignal,
-  ): Promise<ConnectedAccountConnectedAccount[]> {
-    const result = principal.authType === "connected-account"
+  ): Promise<ConnectedAccountProtocol[]> {
+    const result = principal.authType === "employee_jwt"
       ? await abortablePoolQuery<AccessRow>(this.pool, `
           SELECT a.account_id, g.connection_id, a.selling_partner_id, a.display_name,
                  c.credential_owner_id, b.remark, b.bound_at
@@ -87,7 +87,7 @@ export class PostgresAccountAccessPolicy implements AccountAccessPolicy {
     accountId: string,
     signal?: AbortSignal,
   ): Promise<AmazonAccountAccess> {
-    const result = principal.authType === "connected-account"
+    const result = principal.authType === "employee_jwt"
       ? await abortablePoolQuery<AccessRow>(this.pool, `
           SELECT a.account_id, g.connection_id, a.selling_partner_id, a.display_name,
                  c.credential_owner_id, b.remark, b.bound_at
@@ -113,7 +113,7 @@ export class PostgresAccountAccessPolicy implements AccountAccessPolicy {
           LIMIT 1
         `, [accountId], signal);
     const row = result.rows[0];
-    if (!row) throw new ConnectedAccountAccountError(404, "not_found", "Account not found");
+    if (!row) throw new ConnectedAccountError(404, "not_found", "Account not found");
     return { account: account(row), credentialOwnerId: row.credential_owner_id };
   }
 

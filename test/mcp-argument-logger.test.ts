@@ -45,7 +45,7 @@ function input(overrides: Partial<McpArgumentLogInput> = {}): McpArgumentLogInpu
   return {
     requestId: "request-12345678",
     tool: "amazon_search_orders",
-    actorType: "connected-account",
+    actorType: "employee_jwt",
     actorIdHash: "0123456789abcdef",
     argumentsPresent: true,
     arguments: { account_id: "acct_0123456789abcdef" },
@@ -112,7 +112,7 @@ test("writes complete arguments and distinguishes explicit null from missing arg
     event: "mcp.tool.arguments.received",
     request_id: "request-complete",
     tool: "amazon_search_orders",
-    actor_type: "connected-account",
+    actor_type: "employee_jwt",
     actor_id_hash: "0123456789abcdef",
     arguments_present: true,
     arguments_bytes: Buffer.byteLength(JSON.stringify(completeArguments), "utf8"),
@@ -328,7 +328,7 @@ test("write failures do not reject and emit a parameter-free structured failure 
   assert.equal(record.result, "error");
   assert.equal(record.error_code, "internal_error");
   assert.equal(record.tool, "amazon_search_orders");
-  assert.equal(record.actor_type, "connected-account");
+  assert.equal(record.actor_type, "employee_jwt");
   assert.equal(record.actor_id_hash, "0123456789abcdef");
   assert.doesNotMatch(lines[0]!, /must-not-appear-in-stdout|arguments|account_id/u);
 });

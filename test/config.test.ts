@@ -40,7 +40,7 @@ amazon:
   allowedSellingPartnerIds: [A1SELLER]
 storage:
   dataDirectory: /data
-connected-account:
+connectedAccount:
   enabled: false
 `;
 
@@ -101,17 +101,17 @@ test("loads PostgreSQL, Redis and local ConnectedAccount JWT verification", asyn
   redis:
     url: redis://127.0.0.1:6379/0
     namespace: amazon-sp-api`)
-    .replace("connected-account:\n  enabled: false", `connected-account:
+    .replace("connectedAccount:\n  enabled: false", `connectedAccount:
   enabled: true
   audience: amazon-sp-api-account-service
-  allowedOrigins: [https://app.connected-account.example]
+  allowedOrigins: [https://app.example.com]
   jwtKeys:
     - kid: provider-v1
-      issuer: https://connected-account.example
+      issuer: https://example.com
       secret: ${jwt}`);
   const config = await loadConfig(await configFile(yaml));
-  assert.equal(config.connected-accountEnabled, true);
-  assert.equal(config.connected-accountJwtKeys[0]?.kid, "provider-v1");
+  assert.equal(config.connectedAccountEnabled, true);
+  assert.equal(config.connectedAccountJwtKeys[0]?.kid, "provider-v1");
   assert.equal(config.postgresPool.max, 12);
   assert.equal(config.redisNamespace, "amazon-sp-api");
 });
@@ -194,10 +194,10 @@ test("loads strict OA OIDC settings and derives the fixed callback", async () =>
 test("requires PostgreSQL and Redis when ConnectedAccount is enabled", async () => {
   const incomplete = validYaml.replace("enabled: false", `enabled: true
   audience: amazon-sp-api-account-service
-  allowedOrigins: [https://app.connected-account.example]
+  allowedOrigins: [https://app.example.com]
   jwtKeys:
     - kid: provider-v1
-      issuer: https://connected-account.example
+      issuer: https://example.com
       secret: ${randomBytes(32).toString("base64")}`);
   await assert.rejects(loadConfig(await configFile(incomplete)), /requires storage\.postgres and storage\.redis/);
 });

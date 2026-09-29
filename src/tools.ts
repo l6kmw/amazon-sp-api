@@ -8,10 +8,10 @@ import { mcpMetrics } from "./metrics.js";
 import type { AmazonDocumentReader } from "./document-reader.js";
 import type { AmazonPrincipal } from "./identity.js";
 import {
-  ConnectedAccountAccountError,
-  type ConnectedAccountConnectedAccount,
+  ConnectedAccountError,
+  type ConnectedAccountProtocol,
   type MaybePromise,
-} from "./connected-account-accounts.js";
+} from "./connected-accounts.js";
 import {
   projectInventoryResponse,
   projectListingItemResponse,
@@ -312,7 +312,7 @@ function successResult(schema: z.ZodTypeAny, value: unknown) {
 }
 
 function publicIdentityId(principal: AmazonPrincipal): string {
-  return principal.authType === "connected-account" ? principal.employeeId : principal.agentId;
+  return principal.authType === "employee_jwt" ? principal.employeeId : principal.agentId;
 }
 
 function snapshotSummary(options: {
@@ -459,11 +459,11 @@ export function createAmazonMcpServer(
         throw new AmazonMcpError("TENANT_REQUIRED", "authenticated identity is required");
       }
       return successResult(identityOutputSchema, {
-        identity_type: options.principal.authType === "connected-account"
+        identity_type: options.principal.authType === "employee_jwt"
           ? "employee_jwt"
           : "test_agent_token",
         identity_id: publicIdentityId(options.principal),
-        role: options.principal.authType === "connected-account" ? "employee" : "test_agent",
+        role: options.principal.authType === "employee_jwt" ? "employee" : "test_agent",
       });
     },
   );
@@ -511,12 +511,12 @@ export function createAmazonMcpServer(
     } catch (error) {
       if (signal?.aborted || error instanceof SpApiRequestBudgetExceededError) throw error;
       mcpMetrics.inc("account_access_rejections_total", "Account policy access rejections", {
-        actor_type: options.principal.authType === "connected-account" ? "connected-account" : "test_agent",
-        error_code: error instanceof ConnectedAccountAccountError && error.status === 404
+        actor_type: options.principal.authType === "employee_jwt" ? "employee_jwt" : "test_agent",
+        error_code: error instanceof ConnectedAccountError && error.status === 404
           ? "resource_not_found"
           : "forbidden",
       });
-      if (error instanceof ConnectedAccountAccountError && error.status === 404) {
+      if (error instanceof ConnectedAccountError && error.status === 404) {
         throw new AmazonMcpError("NOT_CONNECTED", "Amazon account is not available");
       }
       throw error;

@@ -119,7 +119,7 @@ export async function createDevMemoryPool(): Promise<Pool> {
     "amazon_sp_api.connection_grant": [
       {
         connection_id: "con_us_main_01",
-        issuer: "https://example.com/issuers/connected-account",
+        issuer: "https://example.com/issuers/example",
         account_id: "acct_us_main",
         credential_id: "cred_us_01",
         status: "active",
@@ -127,7 +127,7 @@ export async function createDevMemoryPool(): Promise<Pool> {
       },
       {
         connection_id: "con_eu_flagship_01",
-        issuer: "https://example.com/issuers/connected-account",
+        issuer: "https://example.com/issuers/example",
         account_id: "acct_eu_flagship",
         credential_id: "cred_eu_01",
         status: "active",
@@ -135,7 +135,7 @@ export async function createDevMemoryPool(): Promise<Pool> {
       },
       {
         connection_id: "con_jp_store_01",
-        issuer: "https://example.com/issuers/connected-account",
+        issuer: "https://example.com/issuers/example",
         account_id: "acct_jp_store",
         credential_id: "cred_jp_01",
         status: "active",
@@ -144,14 +144,14 @@ export async function createDevMemoryPool(): Promise<Pool> {
     ],
     "amazon_sp_api.employee_registry": [
       {
-        issuer: "https://example.com/issuers/connected-account",
+        issuer: "https://example.com/issuers/example",
         employee_id: "emp_zhang_san",
         workspace_id: "tenant-1",
         first_seen_at: new Date(Date.now() - 30 * 86400000),
         last_seen_at: new Date(),
       },
       {
-        issuer: "https://example.com/issuers/connected-account",
+        issuer: "https://example.com/issuers/example",
         employee_id: "emp_li_si",
         workspace_id: "tenant-1",
         first_seen_at: new Date(Date.now() - 10 * 86400000),
@@ -160,7 +160,7 @@ export async function createDevMemoryPool(): Promise<Pool> {
     ],
     "amazon_sp_api.employee_account_binding": [
       {
-        issuer: "https://example.com/issuers/connected-account",
+        issuer: "https://example.com/issuers/example",
         employee_id: "emp_zhang_san",
         connection_id: "con_us_main_01",
         account_id: "acct_us_main",
@@ -170,7 +170,7 @@ export async function createDevMemoryPool(): Promise<Pool> {
         unbound_at: null,
       },
       {
-        issuer: "https://example.com/issuers/connected-account",
+        issuer: "https://example.com/issuers/example",
         employee_id: "emp_li_si",
         connection_id: "con_eu_flagship_01",
         account_id: "acct_eu_flagship",

@@ -27,8 +27,8 @@ const AMAZON_INTENT_COOKIE = "amazon_oauth_intent";
 export interface OAuthState extends ExpiringRecord {
   sellingPartnerId: string;
   tenantId: string;
-  connected-accountAttemptId?: string;
-  connected-accountOrigin?: string;
+  connectedAccountAttemptId?: string;
+  connectedAccountOrigin?: string;
 }
 
 export class OAuthInputError extends Error {}
@@ -111,7 +111,7 @@ function sendConnectedAccountSuccess(
 ): void {
   const nonce = randomBytes(18).toString("base64");
   const message = JSON.stringify({
-    type: "connected-account:connected-account-authorization",
+    type: "connected-account:authorization-completed",
     attemptId,
     status: "active",
   }).replaceAll("<", "\\u003c");
@@ -200,9 +200,9 @@ export function createAmazonOAuthRouter(options: {
     const state = await stateStore.create({
       sellingPartnerId,
       tenantId: intent.tenantId,
-      ...(intent.connected-accountAttemptId ? {
-        connected-accountAttemptId: intent.connected-accountAttemptId,
-        connected-accountOrigin: intent.connected-accountOrigin,
+      ...(intent.connectedAccountAttemptId ? {
+        connectedAccountAttemptId: intent.connectedAccountAttemptId,
+        connectedAccountOrigin: intent.connectedAccountOrigin,
       } : {}),
     });
     callbackUri.searchParams.set("amazon_state", amazonState);
@@ -252,11 +252,11 @@ export function createAmazonOAuthRouter(options: {
     if (!stateRecord) throw new OAuthInputError("state is invalid or expired");
     const tokenResponse = await exchangeCode({ code, config });
     await connectionStore.save(sellingPartnerId, stateRecord.tenantId, tokenResponse, {
-      connected-accountAttemptId: stateRecord.connected-accountAttemptId,
+      connectedAccountAttemptId: stateRecord.connectedAccountAttemptId,
     });
     await options.onConnectionSaved?.(stateRecord.tenantId, sellingPartnerId);
-    if (stateRecord.connected-accountAttemptId && stateRecord.connected-accountOrigin) {
-      sendConnectedAccountSuccess(response, stateRecord.connected-accountAttemptId, stateRecord.connected-accountOrigin);
+    if (stateRecord.connectedAccountAttemptId && stateRecord.connectedAccountOrigin) {
+      sendConnectedAccountSuccess(response, stateRecord.connectedAccountAttemptId, stateRecord.connectedAccountOrigin);
     } else if (config.successRedirectUri) {
       sendRedirect(response, config.successRedirectUri);
     } else {

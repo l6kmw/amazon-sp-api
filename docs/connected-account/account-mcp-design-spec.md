@@ -6,7 +6,7 @@
 
 ## 1. 身份与信任边界
 
-MCP 接受两类相互独立的凭据：服务在本进程内使用 `connected-account.jwtKeys` 验签的 ConnectedAccount Employee JWT，以及管理控制面数据库中仅存 SHA-256 Hash 的 `oat_*` Test Agent Token。两类凭据解析为不同 Principal，不依赖、不调用外部身份 HTTP 接口；旧共享 Bearer Token、`IdentityVerifier`、`LegacyIdentityVerifier`、`legacy` principal 和 `legacy_agent` 类型仍保持删除。
+MCP 接受两类相互独立的凭据：服务在本进程内使用 `connectedAccount.jwtKeys` 验签的 ConnectedAccount Employee JWT，以及管理控制面数据库中仅存 SHA-256 Hash 的 `oat_*` Test Agent Token。两类凭据解析为不同 Principal，不依赖、不调用外部身份 HTTP 接口；旧共享 Bearer Token、`IdentityVerifier`、`LegacyIdentityVerifier`、`legacy` principal 和 `legacy_agent` 类型仍保持删除。
 
 - Header 必须为 `alg=HS256` 且包含已配置的 `kid`。
 - payload 必须包含与密钥绑定的 `iss`、配置的 `aud`、稳定 `sub`、`jti`、`iat`、`nbf`、`exp` 以及端点要求的 Scope。
@@ -34,7 +34,7 @@ Employee 稳定身份为已验证的 `iss + sub`。内部 workspace 是 `jwt-emp
 
 ## 3. Connected Account 协议
 
-Discovery 仅在 `connected-account.enabled=true` 时发布，主要能力为 `multiAccount=true`、`sharedEmployeeBinding=true`、`independentOwnerAuthorization=true`、`remark=true`、`refresh=true`、`unbind=true`。
+Discovery 仅在 `connectedAccount.enabled=true` 时发布，主要能力为 `multiAccount=true`、`sharedEmployeeBinding=true`、`independentOwnerAuthorization=true`、`remark=true`、`refresh=true`、`unbind=true`。
 
 | Method | Path | Scope | 作用 |
 |---|---|---|---|

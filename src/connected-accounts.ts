@@ -12,10 +12,10 @@ import type {
 const PROVIDER_KEY = "amazon-sp-api";
 const ATTEMPT_TTL_MS = 10 * 60_000;
 
-export type ConnectedAccountPrincipal = Extract<AmazonPrincipal, { authType: "connected-account" }>;
+export type ConnectedAccountPrincipal = Extract<AmazonPrincipal, { authType: "employee_jwt" }>;
 export type MaybePromise<T> = T | Promise<T>;
 
-export interface ConnectedAccountConnectedAccount {
+export interface ConnectedAccountProtocol {
   connectionId: string;
   externalAccountId: string;
   providerKey: typeof PROVIDER_KEY;
@@ -31,46 +31,46 @@ export interface ConnectedAccountAuthorizationAttempt {
   status: "pending" | "active" | "failed" | "expired";
   expiresAt: string;
   authorizationUrl?: string;
-  connection?: ConnectedAccountConnectedAccount;
+  connection?: ConnectedAccountProtocol;
   errorCode?: string;
 }
 
-export class ConnectedAccountAccountError extends Error {
+export class ConnectedAccountError extends Error {
   constructor(
     readonly status: 400 | 404 | 409 | 502,
     readonly code: "invalid_request" | "not_found" | "conflict" | "upstream_error",
     message: string,
   ) {
     super(message);
-    this.name = "ConnectedAccountAccountError";
+    this.name = "ConnectedAccountError";
   }
 }
 
-export interface ConnectedAccountAccountService {
+export interface ConnectedAccountService {
   createAuthorizationAttempt(principal: ConnectedAccountPrincipal): Promise<ConnectedAccountAuthorizationAttempt>;
   getAuthorizationAttempt(
     principal: ConnectedAccountPrincipal,
     attemptId: string,
   ): Promise<ConnectedAccountAuthorizationAttempt>;
-  listAccounts(principal: ConnectedAccountPrincipal): MaybePromise<ConnectedAccountConnectedAccount[]>;
+  listAccounts(principal: ConnectedAccountPrincipal): MaybePromise<ConnectedAccountProtocol[]>;
   resolveAccount(
     principal: ConnectedAccountPrincipal,
     accountId: string,
-  ): MaybePromise<ConnectedAccountConnectedAccount>;
-  refreshAccounts(principal: ConnectedAccountPrincipal): Promise<ConnectedAccountConnectedAccount[]>;
+  ): MaybePromise<ConnectedAccountProtocol>;
+  refreshAccounts(principal: ConnectedAccountPrincipal): Promise<ConnectedAccountProtocol[]>;
   lookupAccounts(
     principal: ConnectedAccountPrincipal,
     connectionIds: readonly string[],
-  ): MaybePromise<ConnectedAccountConnectedAccount[]>;
+  ): MaybePromise<ConnectedAccountProtocol[]>;
   bindAccount(
     principal: ConnectedAccountPrincipal,
     connectionId: string,
-  ): MaybePromise<{ account: ConnectedAccountConnectedAccount; created: boolean }>;
+  ): MaybePromise<{ account: ConnectedAccountProtocol; created: boolean }>;
   shareAccount(
     owner: ConnectedAccountPrincipal,
     connectionId: string,
     target: ConnectedAccountPrincipal,
-  ): MaybePromise<{ account: ConnectedAccountConnectedAccount; created: boolean }>;
+  ): MaybePromise<{ account: ConnectedAccountProtocol; created: boolean }>;
   unshareAccount(
     owner: ConnectedAccountPrincipal,
     connectionId: string,
@@ -80,7 +80,7 @@ export interface ConnectedAccountAccountService {
     principal: ConnectedAccountPrincipal,
     connectionId: string,
     remark: string,
-  ): MaybePromise<ConnectedAccountConnectedAccount>;
+  ): MaybePromise<ConnectedAccountProtocol>;
   unbindAccount(principal: ConnectedAccountPrincipal, connectionId: string): MaybePromise<void>;
   disconnect(principal: ConnectedAccountPrincipal, connectionId: string): MaybePromise<void>;
 }
@@ -112,7 +112,7 @@ function opaqueId(prefix: "acct" | "att" | "con"): string {
   return `${prefix}_${randomBytes(18).toString("base64url")}`;
 }
 
-function connectionFromRow(row: AccountRow): ConnectedAccountConnectedAccount {
+function connectionFromRow(row: AccountRow): ConnectedAccountProtocol {
   return {
     connectionId: row.connection_id,
     externalAccountId: row.external_account_id,
@@ -125,7 +125,7 @@ function connectionFromRow(row: AccountRow): ConnectedAccountConnectedAccount {
   };
 }
 
-export class ConnectedAccountAccountStore implements ConnectedAccountAccountService {
+export class ConnectedAccountStore implements ConnectedAccountService {
   readonly #database: DatabaseSync;
   readonly #oauth: OAuthBridge;
   readonly #authorizationOrigin: string;
@@ -236,7 +236,7 @@ export class ConnectedAccountAccountStore implements ConnectedAccountAccountServ
         SET status = 'failed', error_code = 'oauth_unavailable'
         WHERE issuer = ? AND employee_id = ? AND attempt_id = ?
       `).run(principal.issuer, principal.employeeId, attemptId);
-      throw new ConnectedAccountAccountError(502, "upstream_error", "Authorization service unavailable");
+      throw new ConnectedAccountError(502, "upstream_error", "Authorization service unavailable");
     }
   }
 
@@ -246,7 +246,7 @@ export class ConnectedAccountAccountStore implements ConnectedAccountAccountServ
   ): Promise<ConnectedAccountAuthorizationAttempt> {
     this.#touchEmployee(principal);
     let attempt = this.#attempt(principal, attemptId);
-    if (!attempt) throw new ConnectedAccountAccountError(404, "not_found", "Attempt not found");
+    if (!attempt) throw new ConnectedAccountError(404, "not_found", "Attempt not found");
 
     if (attempt.status === "pending" && Date.parse(attempt.expires_at) <= this.#now().getTime()) {
       this.#database.prepare(`
@@ -264,7 +264,7 @@ export class ConnectedAccountAccountStore implements ConnectedAccountAccountServ
           attemptId,
         );
       } catch {
-        throw new ConnectedAccountAccountError(502, "upstream_error", "Authorization service unavailable");
+        throw new ConnectedAccountError(502, "upstream_error", "Authorization service unavailable");
       }
       if (completion) {
         this.#completeAttempt(principal, attemptId, completion);
@@ -284,7 +284,7 @@ export class ConnectedAccountAccountStore implements ConnectedAccountAccountServ
     return response;
   }
 
-  listAccounts(principal: ConnectedAccountPrincipal): ConnectedAccountConnectedAccount[] {
+  listAccounts(principal: ConnectedAccountPrincipal): ConnectedAccountProtocol[] {
     this.#touchEmployee(principal);
     return (this.#database.prepare(`
       SELECT a.account_id, g.connection_id, a.external_account_id, a.display_name,
@@ -303,7 +303,7 @@ export class ConnectedAccountAccountStore implements ConnectedAccountAccountServ
   resolveAccount(
     principal: ConnectedAccountPrincipal,
     accountId: string,
-  ): ConnectedAccountConnectedAccount {
+  ): ConnectedAccountProtocol {
     this.#touchEmployee(principal);
     const row = this.#database.prepare(`
       SELECT a.account_id, g.connection_id, a.external_account_id, a.display_name,
@@ -315,18 +315,18 @@ export class ConnectedAccountAccountStore implements ConnectedAccountAccountServ
       WHERE b.issuer = ? AND b.employee_id = ? AND b.status = 'active'
         AND g.status = 'active' AND a.account_id = ? AND a.status = 'active'
     `).get(principal.issuer, principal.employeeId, accountId) as unknown as AccountRow | undefined;
-    if (!row) throw new ConnectedAccountAccountError(404, "not_found", "Account not found");
+    if (!row) throw new ConnectedAccountError(404, "not_found", "Account not found");
     return connectionFromRow(row);
   }
 
-  async refreshAccounts(principal: ConnectedAccountPrincipal): Promise<ConnectedAccountConnectedAccount[]> {
+  async refreshAccounts(principal: ConnectedAccountPrincipal): Promise<ConnectedAccountProtocol[]> {
     return this.listAccounts(principal);
   }
 
   lookupAccounts(
     principal: ConnectedAccountPrincipal,
     connectionIds: readonly string[],
-  ): ConnectedAccountConnectedAccount[] {
+  ): ConnectedAccountProtocol[] {
     const wanted = new Set(connectionIds);
     return this.listAccounts(principal).filter((account) => wanted.has(account.connectionId));
   }
@@ -334,7 +334,7 @@ export class ConnectedAccountAccountStore implements ConnectedAccountAccountServ
   bindAccount(
     principal: ConnectedAccountPrincipal,
     connectionId: string,
-  ): { account: ConnectedAccountConnectedAccount; created: boolean } {
+  ): { account: ConnectedAccountProtocol; created: boolean } {
     this.#touchEmployee(principal);
     this.#connectionForGrant(principal, connectionId, false);
     const existing = this.#database.prepare(`
@@ -370,10 +370,10 @@ export class ConnectedAccountAccountStore implements ConnectedAccountAccountServ
     owner: ConnectedAccountPrincipal,
     connectionId: string,
     target: ConnectedAccountPrincipal,
-  ): { account: ConnectedAccountConnectedAccount; created: boolean } {
+  ): { account: ConnectedAccountProtocol; created: boolean } {
     this.#touchEmployee(owner);
     if (target.issuer !== owner.issuer) {
-      throw new ConnectedAccountAccountError(404, "not_found", "Connection not found");
+      throw new ConnectedAccountError(404, "not_found", "Connection not found");
     }
     this.#touchEmployee(target);
     this.#connectionForGrant(owner, connectionId, false);
@@ -402,7 +402,7 @@ export class ConnectedAccountAccountStore implements ConnectedAccountAccountServ
   unshareAccount(owner: ConnectedAccountPrincipal, connectionId: string, target: ConnectedAccountPrincipal): void {
     this.#touchEmployee(owner);
     if (target.issuer !== owner.issuer || target.employeeId === owner.employeeId) {
-      throw new ConnectedAccountAccountError(404, "not_found", "Connection not found");
+      throw new ConnectedAccountError(404, "not_found", "Connection not found");
     }
     this.#connectionForGrant(owner, connectionId, false);
     this.#database.prepare(`
@@ -415,14 +415,14 @@ export class ConnectedAccountAccountStore implements ConnectedAccountAccountServ
     principal: ConnectedAccountPrincipal,
     connectionId: string,
     remark: string,
-  ): ConnectedAccountConnectedAccount {
+  ): ConnectedAccountProtocol {
     this.#touchEmployee(principal);
     const result = this.#database.prepare(`
       UPDATE employee_account_binding SET remark = ?, updated_at = ?
       WHERE issuer = ? AND employee_id = ? AND connection_id = ? AND status = 'active'
     `).run(remark, this.#now().toISOString(), principal.issuer, principal.employeeId, connectionId);
     if (result.changes === 0) {
-      throw new ConnectedAccountAccountError(404, "not_found", "Binding not found");
+      throw new ConnectedAccountError(404, "not_found", "Binding not found");
     }
     return this.#connectionForBinding(principal, connectionId);
   }
@@ -434,7 +434,7 @@ export class ConnectedAccountAccountStore implements ConnectedAccountAccountServ
       WHERE issuer = ? AND employee_id = ? AND connection_id = ?
     `).run(this.#now().toISOString(), principal.issuer, principal.employeeId, connectionId);
     if (result.changes === 0) {
-      throw new ConnectedAccountAccountError(404, "not_found", "Binding not found");
+      throw new ConnectedAccountError(404, "not_found", "Binding not found");
     }
   }
 
@@ -449,7 +449,7 @@ export class ConnectedAccountAccountStore implements ConnectedAccountAccountServ
       external_account_id: string;
       owner_workspace_id: string;
     } | undefined;
-    if (!grant) throw new ConnectedAccountAccountError(404, "not_found", "Connection not found");
+    if (!grant) throw new ConnectedAccountError(404, "not_found", "Connection not found");
     await this.#oauth.disconnectIfPresent(grant.owner_workspace_id, grant.external_account_id);
     const now = this.#now().toISOString();
     this.#transaction(() => {
@@ -538,7 +538,7 @@ export class ConnectedAccountAccountStore implements ConnectedAccountAccountServ
     });
   }
 
-  #connectionForBinding(principal: ConnectedAccountPrincipal, connectionId: string): ConnectedAccountConnectedAccount {
+  #connectionForBinding(principal: ConnectedAccountPrincipal, connectionId: string): ConnectedAccountProtocol {
     const row = this.#database.prepare(`
       SELECT a.account_id, g.connection_id, a.external_account_id, a.display_name,
              b.remark, b.bound_at
@@ -549,7 +549,7 @@ export class ConnectedAccountAccountStore implements ConnectedAccountAccountServ
       WHERE b.issuer = ? AND b.employee_id = ? AND b.connection_id = ?
         AND b.status = 'active' AND g.status = 'active' AND a.status = 'active'
     `).get(principal.issuer, principal.employeeId, connectionId) as unknown as AccountRow | undefined;
-    if (!row) throw new ConnectedAccountAccountError(404, "not_found", "Connection not found");
+    if (!row) throw new ConnectedAccountError(404, "not_found", "Connection not found");
     return connectionFromRow(row);
   }
 
@@ -557,7 +557,7 @@ export class ConnectedAccountAccountStore implements ConnectedAccountAccountServ
     principal: ConnectedAccountPrincipal,
     connectionId: string,
     requireBinding: boolean,
-  ): ConnectedAccountConnectedAccount {
+  ): ConnectedAccountProtocol {
     const row = this.#database.prepare(`
       SELECT a.account_id, g.connection_id, a.external_account_id, a.display_name,
              b.remark, b.bound_at
@@ -570,7 +570,7 @@ export class ConnectedAccountAccountStore implements ConnectedAccountAccountServ
         AND g.status = 'active' AND a.status = 'active'
         ${requireBinding ? "AND b.connection_id IS NOT NULL" : ""}
     `).get(principal.issuer, principal.employeeId, connectionId) as unknown as AccountRow | undefined;
-    if (!row) throw new ConnectedAccountAccountError(404, "not_found", "Connection not found");
+    if (!row) throw new ConnectedAccountError(404, "not_found", "Connection not found");
     return connectionFromRow(row);
   }
 

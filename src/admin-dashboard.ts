@@ -36,7 +36,7 @@ export interface AdminDashboardDeps {
   readinessCheck?: () => Promise<ReadinessResult>;
   toolCount: number;
   mcpEndpoint: string;
-  connected-accountKeyringConfigured: boolean;
+  connectedAccountKeyringConfigured: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -331,7 +331,7 @@ export function registerAdminDashboardRoutes(
         postgres_status: readiness?.checks.postgres ?? "error",
         redis_status: readiness?.checks.redis ?? "error",
         credential_keyring_status: readiness?.checks.encryptionKey ?? "error",
-        connected-account_keyring_status: deps.connected-accountKeyringConfigured ? "ok" : "error",
+        connected_account_keyring_status: deps.connectedAccountKeyringConfigured ? "ok" : "error",
       });
     } catch {
       response.status(500).json({ error: { code: "internal_error", message: "Internal server error" } });

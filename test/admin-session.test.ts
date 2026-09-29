@@ -11,7 +11,7 @@ import { registerAdminBindingRoutes } from "../src/admin-bindings.js";
 import { createAmazonMcpHttpApp } from "../src/http.js";
 import { hashAdminPassword } from "../src/admin-auth.js";
 import { AdminSessionManager, registerAdminSessionRoutes } from "../src/admin-session.js";
-import type { PostgresConnectedAccountAccountStore } from "../src/postgres-connected-account-accounts.js";
+import type { PostgresConnectedAccountStore } from "../src/postgres-connected-accounts.js";
 
 async function fixture(now = { value: Date.now() }) {
   const password = "correct horse battery staple";
@@ -116,7 +116,7 @@ async function fixture(now = { value: Date.now() }) {
     async adminDisconnectConnection(issuer: string, connectionId: string) {
       bindingCalls.push({ operation: "disconnect", issuer, connectionId });
     },
-  } as unknown as PostgresConnectedAccountAccountStore;
+  } as unknown as PostgresConnectedAccountStore;
   registerAdminAuditRoutes(app, sessions, audits, agents);
   registerAdminAgentRoutes(app, sessions, agents, audits);
   registerAdminBindingRoutes(app, sessions, agents, audits, accounts);
@@ -395,7 +395,7 @@ test("registers audited admin OAuth attempts and keeps refresh writes unregister
     adminSessions: {} as AdminSessionManager,
     adminAgents: {} as AdminAgentService,
     adminAudits: {} as AdminAuditService,
-    adminBindingAccounts: {} as PostgresConnectedAccountAccountStore,
+    adminBindingAccounts: {} as PostgresConnectedAccountStore,
   });
   const server = app.listen(0, "127.0.0.1");
   await new Promise<void>((resolve, reject) => {

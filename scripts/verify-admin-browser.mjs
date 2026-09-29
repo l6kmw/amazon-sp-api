@@ -99,7 +99,7 @@ const server = createServer(async (request, response) => {
       application_id_configured: true, public_origin: `http://127.0.0.1:${server.address().port}`,
       oauth_callback_url: `http://127.0.0.1:${server.address().port}/oauth/amazon/callback`,
       postgres_status: "ok", redis_status: "ok", credential_keyring_status: "ok",
-      connected-account_keyring_status: "ok",
+      connected_account_keyring_status: "ok",
     });
     return;
   }

@@ -8,7 +8,7 @@ test("renders low-cardinality prometheus text and collapses unknown labels", () 
   registry.inc("mcp_tool_results_total", "tool results", {
     tool: "amazon_get_order",
     result: "success",
-    actor_type: "connected-account",
+    actor_type: "employee_jwt",
   });
   registry.inc("mcp_tool_results_total", "tool results", {
     tool: "amazon_list_accounts",
@@ -28,12 +28,12 @@ test("renders low-cardinality prometheus text and collapses unknown labels", () 
   registry.setGauge("readiness", "dependency readiness", 1, { dependency: "postgres" });
 
   const text = registry.renderPrometheus();
-  assert.match(text, /amazon_connected-account_mcp_tool_results_total/);
+  assert.match(text, /amazon_connected_account_mcp_tool_results_total/);
   assert.match(text, /tool="amazon_get_order"/);
   assert.match(text, /actor_type="test_agent"/);
   assert.match(text, /tool="unknown"/);
   assert.match(text, /result="unknown"/);
-  assert.match(text, /amazon_connected-account_mcp_tool_duration_seconds_bucket/);
+  assert.match(text, /amazon_connected_account_mcp_tool_duration_seconds_bucket/);
   assert.match(text, /dependency="postgres"/);
   assert.doesNotMatch(text, /request_id|evil|should-not-appear/);
 });

@@ -16,7 +16,7 @@ import { loadConfig, type RuntimeConfig } from "./config.js";
 import { ConnectionService, type AuthorizationIntent } from "./connection-service.js";
 import { AmazonDocumentReader } from "./document-reader.js";
 import { createDevMemoryPool } from "./dev-pool.js";
-import { ConnectedAccountAccountStore } from "./connected-account-accounts.js";
+import { ConnectedAccountStore } from "./connected-accounts.js";
 import { CONNECTED_ACCOUNT_DISCOVERY_MANIFEST, ConnectedAccountJwtVerifier } from "./connected-account.js";
 import { createAmazonMcpHttpApp, type ReadinessResult } from "./http.js";
 import { createAmazonAuthenticator } from "./identity.js";
@@ -25,7 +25,7 @@ import { createStructuredLogger } from "./logger.js";
 import { McpArgumentFileLogger } from "./mcp-argument-logger.js";
 import { createAmazonOAuthRouter, type OAuthState } from "./oauth.js";
 import { PUBLIC_MCP_PATH } from "./portal.js";
-import { PostgresConnectedAccountAccountStore } from "./postgres-connected-account-accounts.js";
+import { PostgresConnectedAccountStore } from "./postgres-connected-accounts.js";
 import { PostgresRefreshTokenStore } from "./postgres-token-store.js";
 import { RedisAccessTokenCoordinator } from "./redis-coordinator.js";
 import { FileExpiringStore, RedisExpiringStore } from "./state-store.js";
@@ -201,37 +201,37 @@ export async function createRuntime(configFile?: string) {
     store: connectionStore,
     intentStore,
     publicOrigin: config.publicOrigin,
-    allowedConnectedAccountOrigins: [...config.connected-accountAllowedOrigins, config.publicOrigin],
+    allowedConnectedAccountOrigins: [...config.connectedAccountAllowedOrigins, config.publicOrigin],
     connectionCacheTtlMs: CONNECTION_CACHE_TTL_MS,
     onDisconnect: async (tenantId, sellingPartnerId) => {
       await accessTokens.invalidateAccessToken(sellingPartnerId, tenantId);
       regionCache.delete(tenantId, sellingPartnerId);
     },
   });
-  const connected-accountAccounts = config.connected-accountEnabled
+  const connectedAccountService = config.connectedAccountEnabled
     ? pool
-      ? new PostgresConnectedAccountAccountStore({
+      ? new PostgresConnectedAccountStore({
         pool,
         oauth: connections,
-        authorizationOrigin: config.connected-accountAllowedOrigins[0]!,
+        authorizationOrigin: config.connectedAccountAllowedOrigins[0]!,
         adminAuthorizationOrigin: config.publicOrigin,
         invalidateCredential,
       })
-      : new ConnectedAccountAccountStore({
-        file: config.connected-accountDatabaseFile,
+      : new ConnectedAccountStore({
+        file: config.connectedAccountDatabaseFile,
         oauth: connections,
-        authorizationOrigin: config.connected-accountAllowedOrigins[0]!,
+        authorizationOrigin: config.connectedAccountAllowedOrigins[0]!,
       })
     : undefined;
-  if (connected-accountAccounts) startupCleanup.push(() => Promise.resolve(connected-accountAccounts.close()));
+  if (connectedAccountService) startupCleanup.push(() => Promise.resolve(connectedAccountService.close()));
 
   const adminControlEnabled = Boolean(config.databaseUrl && config.adminSessionSecret);
   const adminAgents = adminControlEnabled ? new AdminAgentService(pool) : undefined;
   const authenticate = createAmazonAuthenticator({
-    connected-accountVerifier: config.connected-accountEnabled
+    connectedAccountVerifier: config.connectedAccountEnabled
       ? new ConnectedAccountJwtVerifier({
-        audience: config.connected-accountJwtAudience!,
-        keys: config.connected-accountJwtKeys,
+        audience: config.connectedAccountJwtAudience!,
+        keys: config.connectedAccountJwtKeys,
       })
       : undefined,
     authenticateTestAgent: adminAgents
@@ -275,12 +275,12 @@ export async function createRuntime(configFile?: string) {
     : undefined;
   const adminAudits = pool ? new AdminAuditService(pool) : undefined;
   const adminBindingAccounts = adminControlEnabled
-    ? connected-accountAccounts instanceof PostgresConnectedAccountAccountStore
-      ? connected-accountAccounts
-      : new PostgresConnectedAccountAccountStore({
+    ? connectedAccountService instanceof PostgresConnectedAccountStore
+      ? connectedAccountService
+      : new PostgresConnectedAccountStore({
         pool,
         oauth: connections,
-        authorizationOrigin: config.connected-accountAllowedOrigins[0] || config.publicOrigin,
+        authorizationOrigin: config.connectedAccountAllowedOrigins[0] || config.publicOrigin,
         adminAuthorizationOrigin: config.publicOrigin,
         invalidateCredential,
       })
@@ -304,8 +304,8 @@ export async function createRuntime(configFile?: string) {
     readinessCheck,
     logger,
     argumentLogger,
-    connected-accountManifest: config.connected-accountEnabled ? CONNECTED_ACCOUNT_DISCOVERY_MANIFEST : undefined,
-    connected-accountAccounts,
+    connectedAccountManifest: config.connectedAccountEnabled ? CONNECTED_ACCOUNT_DISCOVERY_MANIFEST : undefined,
+    connectedAccountService,
     adminSessions,
     adminAgents,
     adminAudits,
@@ -319,7 +319,7 @@ export async function createRuntime(configFile?: string) {
       readinessCheck,
       toolCount: 30,
       mcpEndpoint: PUBLIC_MCP_PATH,
-      connected-accountKeyringConfigured: config.connected-accountEnabled && config.connected-accountJwtKeys.length > 0,
+      connectedAccountKeyringConfigured: config.connectedAccountEnabled && config.connectedAccountJwtKeys.length > 0,
     } : undefined,
     adminAds: adminControlEnabled ? new LoopbackAdminAdsClient() : undefined,
     adminOa: config.adminOa ? {
@@ -336,10 +336,10 @@ export async function createRuntime(configFile?: string) {
       publicOrigin: config.publicOrigin,
       version: SERVICE_VERSION,
       toolCount: 30,
-      connected-accountEnabled: config.connected-accountEnabled,
-      connected-accountAudience: config.connected-accountJwtAudience,
-      connected-accountOrigins: config.connected-accountAllowedOrigins,
-      connected-accountJwtKeys: config.connected-accountJwtKeys.map(({ kid, issuer }) => ({ kid, issuer })),
+      connectedAccountEnabled: config.connectedAccountEnabled,
+      connectedAccountAudience: config.connectedAccountJwtAudience,
+      connectedAccountOrigins: config.connectedAccountAllowedOrigins,
+      connectedAccountJwtKeys: config.connectedAccountJwtKeys.map(({ kid, issuer }) => ({ kid, issuer })),
     },
   });
   app.use(createAmazonOAuthRouter({
@@ -358,7 +358,7 @@ export async function createRuntime(configFile?: string) {
     if (closed) return;
     closed = true;
     await Promise.allSettled([
-      Promise.resolve(connected-accountAccounts?.close?.()),
+      Promise.resolve(connectedAccountService?.close?.()),
       connectionStore.close(),
       stateStore.close(),
       intentStore.close(),

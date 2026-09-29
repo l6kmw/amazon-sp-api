@@ -4,12 +4,12 @@ import { Pool, type PoolClient, type PoolConfig } from "pg";
 
 import { migratePostgres, POSTGRES_SCHEMA_VERSION } from "./postgres-migrations.js";
 import {
-  ConnectedAccountAccountError,
-  type ConnectedAccountAccountService,
+  ConnectedAccountError,
+  type ConnectedAccountService,
   type ConnectedAccountAuthorizationAttempt,
-  type ConnectedAccountConnectedAccount,
+  type ConnectedAccountProtocol,
   type ConnectedAccountPrincipal,
-} from "./connected-account-accounts.js";
+} from "./connected-accounts.js";
 import type {
   ConnectionService,
   ConnectedAccountAuthorizationCompletion,
@@ -54,7 +54,7 @@ function iso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
-function connectionFromRow(row: AccountRow): ConnectedAccountConnectedAccount {
+function connectionFromRow(row: AccountRow): ConnectedAccountProtocol {
   return {
     connectionId: row.connection_id,
     externalAccountId: row.external_account_id,
@@ -67,7 +67,7 @@ function connectionFromRow(row: AccountRow): ConnectedAccountConnectedAccount {
   };
 }
 
-export class PostgresConnectedAccountAccountStore implements ConnectedAccountAccountService {
+export class PostgresConnectedAccountStore implements ConnectedAccountService {
   readonly #pool: Pool;
   readonly #ownsPool: boolean;
   readonly #oauth: OAuthBridge;
@@ -160,7 +160,7 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
         expiresAt: expiresAt.toISOString(),
       };
     } catch {
-      throw new ConnectedAccountAccountError(502, "upstream_error", "Authorization service unavailable");
+      throw new ConnectedAccountError(502, "upstream_error", "Authorization service unavailable");
     }
   }
 
@@ -203,9 +203,9 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
       WHERE a.attempt_id = $1 AND a.started_by_type = 'admin'
     `, [attemptId]);
     const row = owner.rows[0];
-    if (!row) throw new ConnectedAccountAccountError(404, "not_found", "Attempt not found");
+    if (!row) throw new ConnectedAccountError(404, "not_found", "Attempt not found");
     const attempt = await this.#getAuthorizationAttempt({
-      authType: "connected-account",
+      authType: "employee_jwt",
       credentialKind: "employee_jwt",
       tenantId: row.workspace_id,
       issuer: row.issuer,
@@ -250,7 +250,7 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
             completed_at = $1, updated_at = $1
         WHERE issuer = $2 AND employee_id = $3 AND attempt_id = $4
       `, [this.#now(), principal.issuer, principal.employeeId, attemptId]);
-      throw new ConnectedAccountAccountError(502, "upstream_error", "Authorization service unavailable");
+      throw new ConnectedAccountError(502, "upstream_error", "Authorization service unavailable");
     }
   }
 
@@ -269,7 +269,7 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
     knownCompletion?: ConnectedAccountAuthorizationCompletion | null,
   ): Promise<ConnectedAccountAuthorizationAttempt> {
     let attempt = await this.#attempt(principal, attemptId, database);
-    if (!attempt) throw new ConnectedAccountAccountError(404, "not_found", "Attempt not found");
+    if (!attempt) throw new ConnectedAccountError(404, "not_found", "Attempt not found");
 
     if (attempt.status === "pending" && Date.parse(iso(attempt.expires_at)) <= this.#now().getTime()) {
       await database.query(`
@@ -290,7 +290,7 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
             attemptId,
           );
         } catch {
-          throw new ConnectedAccountAccountError(502, "upstream_error", "Authorization service unavailable");
+          throw new ConnectedAccountError(502, "upstream_error", "Authorization service unavailable");
         }
       }
       if (completion) {
@@ -321,7 +321,7 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
     return response;
   }
 
-  async listAccounts(principal: ConnectedAccountPrincipal): Promise<ConnectedAccountConnectedAccount[]> {
+  async listAccounts(principal: ConnectedAccountPrincipal): Promise<ConnectedAccountProtocol[]> {
     await this.#touchEmployee(principal);
     const result = await this.#pool.query<AccountRow>(`
       SELECT a.account_id, g.connection_id,
@@ -345,7 +345,7 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
   async resolveAccount(
     principal: ConnectedAccountPrincipal,
     accountId: string,
-  ): Promise<ConnectedAccountConnectedAccount> {
+  ): Promise<ConnectedAccountProtocol> {
     await this.#touchEmployee(principal);
     const result = await this.#pool.query<AccountRow>(`
       SELECT a.account_id, g.connection_id,
@@ -364,18 +364,18 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
         AND (g.credential_id IS NULL OR credential.status = 'active')
     `, [principal.issuer, principal.employeeId, accountId]);
     const row = result.rows[0];
-    if (!row) throw new ConnectedAccountAccountError(404, "not_found", "Account not found");
+    if (!row) throw new ConnectedAccountError(404, "not_found", "Account not found");
     return connectionFromRow(row);
   }
 
-  async refreshAccounts(principal: ConnectedAccountPrincipal): Promise<ConnectedAccountConnectedAccount[]> {
+  async refreshAccounts(principal: ConnectedAccountPrincipal): Promise<ConnectedAccountProtocol[]> {
     return this.listAccounts(principal);
   }
 
   async lookupAccounts(
     principal: ConnectedAccountPrincipal,
     connectionIds: readonly string[],
-  ): Promise<ConnectedAccountConnectedAccount[]> {
+  ): Promise<ConnectedAccountProtocol[]> {
     const wanted = new Set(connectionIds);
     return (await this.listAccounts(principal))
       .filter((account) => wanted.has(account.connectionId));
@@ -384,7 +384,7 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
   async bindAccount(
     principal: ConnectedAccountPrincipal,
     connectionId: string,
-  ): Promise<{ account: ConnectedAccountConnectedAccount; created: boolean }> {
+  ): Promise<{ account: ConnectedAccountProtocol; created: boolean }> {
     await this.#touchEmployee(principal);
     return this.#transaction(async (client) => {
       await this.#connectionForGrant(client, principal, connectionId, false);
@@ -422,10 +422,10 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
     owner: ConnectedAccountPrincipal,
     connectionId: string,
     target: ConnectedAccountPrincipal,
-  ): Promise<{ account: ConnectedAccountConnectedAccount; created: boolean }> {
+  ): Promise<{ account: ConnectedAccountProtocol; created: boolean }> {
     await this.#touchEmployee(owner);
     if (target.issuer !== owner.issuer) {
-      throw new ConnectedAccountAccountError(404, "not_found", "Connection not found");
+      throw new ConnectedAccountError(404, "not_found", "Connection not found");
     }
     await this.#touchEmployee(target);
     return this.#transaction(async (client) => {
@@ -466,7 +466,7 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
   ): Promise<void> {
     await this.#touchEmployee(owner);
     if (target.issuer !== owner.issuer || target.employeeId === owner.employeeId) {
-      throw new ConnectedAccountAccountError(404, "not_found", "Connection not found");
+      throw new ConnectedAccountError(404, "not_found", "Connection not found");
     }
     await this.#transaction(async (client) => {
       await this.#connectionForGrant(client, owner, connectionId, false);
@@ -484,7 +484,7 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
     employeeId: string,
     connectionId: string,
     client: PoolClient,
-  ): Promise<{ account: ConnectedAccountConnectedAccount; created: boolean }> {
+  ): Promise<{ account: ConnectedAccountProtocol; created: boolean }> {
     const employee = await client.query<{ workspace_id: string }>(`
       SELECT workspace_id FROM amazon_sp_api.employee_registry
       WHERE issuer = $1 AND employee_id = $2
@@ -494,7 +494,7 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
       WHERE issuer = $1 AND connection_id = $2 AND status = 'active'
     `, [issuer, connectionId]);
     if (!employee.rows[0] || !grant.rows[0]) {
-      throw new ConnectedAccountAccountError(404, "not_found", "Connection not found");
+      throw new ConnectedAccountError(404, "not_found", "Connection not found");
     }
     const existing = await client.query<{ status: string }>(`
       SELECT status FROM amazon_sp_api.employee_account_binding
@@ -517,7 +517,7 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
         updated_at = EXCLUDED.updated_at
     `, [issuer, employeeId, employee.rows[0].workspace_id, connectionId, now, grant.rows[0].account_id]);
     const target = {
-      authType: "connected-account" as const,
+      authType: "employee_jwt" as const,
       tenantId: employee.rows[0].workspace_id,
       issuer,
       employeeId,
@@ -552,7 +552,7 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
     `, [issuer, connectionId]);
     const connection = result.rows[0];
     if (!connection) {
-      throw new ConnectedAccountAccountError(404, "not_found", "Connection not found");
+      throw new ConnectedAccountError(404, "not_found", "Connection not found");
     }
     await this.#invalidateCredential?.(
       connection.credential_id,
@@ -563,7 +563,7 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
     const now = this.#now();
     await client.query(`
       UPDATE amazon_sp_api.oauth_connection
-      SET status = 'disconnected', refresh_token = NULL, connected-account_attempt_id = NULL,
+      SET status = 'disconnected', refresh_token = NULL, connected_account_attempt_id = NULL,
           updated_at = $1
       WHERE tenant_id = $2 AND selling_partner_id = $3
     `, [now, connection.credential_owner_id, connection.selling_partner_id]);
@@ -599,7 +599,7 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
       FOR UPDATE OF b
     `, [issuer, connectionId, employeeId]);
     if (!binding.rows[0] || binding.rows[0].owner_employee_id === employeeId) {
-      throw new ConnectedAccountAccountError(404, "not_found", "Binding not found");
+      throw new ConnectedAccountError(404, "not_found", "Binding not found");
     }
     const now = this.#now();
     await client.query(`
@@ -613,7 +613,7 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
     principal: ConnectedAccountPrincipal,
     connectionId: string,
     remark: string,
-  ): Promise<ConnectedAccountConnectedAccount> {
+  ): Promise<ConnectedAccountProtocol> {
     await this.#touchEmployee(principal);
     return this.#transaction(async (client) => {
       const result = await client.query(`
@@ -622,7 +622,7 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
         WHERE issuer = $3 AND employee_id = $4 AND connection_id = $5 AND status = 'active'
       `, [remark, this.#now(), principal.issuer, principal.employeeId, connectionId]);
       if (result.rowCount === 0) {
-        throw new ConnectedAccountAccountError(404, "not_found", "Binding not found");
+        throw new ConnectedAccountError(404, "not_found", "Binding not found");
       }
       return this.#connectionForBinding(client, principal, connectionId);
     });
@@ -636,7 +636,7 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
       WHERE issuer = $2 AND employee_id = $3 AND connection_id = $4
     `, [this.#now(), principal.issuer, principal.employeeId, connectionId]);
     if (result.rowCount === 0) {
-      throw new ConnectedAccountAccountError(404, "not_found", "Binding not found");
+      throw new ConnectedAccountError(404, "not_found", "Binding not found");
     }
   }
 
@@ -655,7 +655,7 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
       WHERE g.issuer = $1 AND g.owner_employee_id = $2 AND g.connection_id = $3
     `, [principal.issuer, principal.employeeId, connectionId]);
     const owned = grant.rows[0];
-    if (!owned) throw new ConnectedAccountAccountError(404, "not_found", "Connection not found");
+    if (!owned) throw new ConnectedAccountError(404, "not_found", "Connection not found");
     await this.#oauth.disconnectIfPresent(
       owned.credential_owner_id,
       owned.selling_partner_id,
@@ -847,9 +847,9 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
       WHERE issuer = $1 AND employee_id = $2
     `, [issuer, employeeId]);
     const workspaceId = employee.rows[0]?.workspace_id;
-    if (!workspaceId) throw new ConnectedAccountAccountError(404, "not_found", "Employee not found");
+    if (!workspaceId) throw new ConnectedAccountError(404, "not_found", "Employee not found");
     return {
-      authType: "connected-account",
+      authType: "employee_jwt",
       credentialKind: "employee_jwt",
       tenantId: workspaceId,
       issuer,
@@ -864,7 +864,7 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
     database: Pool | PoolClient,
     principal: ConnectedAccountPrincipal,
     connectionId: string,
-  ): Promise<ConnectedAccountConnectedAccount> {
+  ): Promise<ConnectedAccountProtocol> {
     const result = await database.query<AccountRow>(`
       SELECT a.account_id, g.connection_id,
              COALESCE(next.selling_partner_id, a.external_account_id) AS external_account_id,
@@ -882,7 +882,7 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
         AND (g.credential_id IS NULL OR credential.status = 'active')
     `, [principal.issuer, principal.employeeId, connectionId]);
     const row = result.rows[0];
-    if (!row) throw new ConnectedAccountAccountError(404, "not_found", "Connection not found");
+    if (!row) throw new ConnectedAccountError(404, "not_found", "Connection not found");
     return connectionFromRow(row);
   }
 
@@ -891,7 +891,7 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
     principal: ConnectedAccountPrincipal,
     connectionId: string,
     requireBinding: boolean,
-  ): Promise<ConnectedAccountConnectedAccount> {
+  ): Promise<ConnectedAccountProtocol> {
     const result = await database.query<AccountRow>(`
       SELECT a.account_id, g.connection_id,
              COALESCE(next.selling_partner_id, a.external_account_id) AS external_account_id,
@@ -910,7 +910,7 @@ export class PostgresConnectedAccountAccountStore implements ConnectedAccountAcc
         ${requireBinding ? "AND b.connection_id IS NOT NULL" : ""}
     `, [principal.issuer, principal.employeeId, connectionId]);
     const row = result.rows[0];
-    if (!row) throw new ConnectedAccountAccountError(404, "not_found", "Connection not found");
+    if (!row) throw new ConnectedAccountError(404, "not_found", "Connection not found");
     return connectionFromRow(row);
   }
 

@@ -40,7 +40,7 @@ test("runs pending PostgreSQL migrations once in a transaction", async () => {
       .filter(({ text }) => text.includes("INSERT INTO amazon_sp_api.schema_migration"))
       .map(({ values }) => values),
     [
-      [1, "baseline_oauth_and_connected-account_accounts"],
+      [1, "baseline_oauth_and_connected_accounts"],
       [2, "expand_control_plane_and_account_lifecycle"],
       [3, "allow_independent_seller_credentials"],
     ],
@@ -60,7 +60,7 @@ test("runs pending PostgreSQL migrations once in a transaction", async () => {
 
   const second = fakePool({
     applied: [
-      { version: 1, name: "baseline_oauth_and_connected-account_accounts" },
+      { version: 1, name: "baseline_oauth_and_connected_accounts" },
       { version: 2, name: "expand_control_plane_and_account_lifecycle" },
       { version: 3, name: "allow_independent_seller_credentials" },
     ],

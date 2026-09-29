@@ -31,7 +31,7 @@
 | Restricted roles / RDT | None |
 | OAuth Login URI | `https://api.example.com/oauth/amazon/login` |
 | OAuth Redirect URI | `https://api.example.com/oauth/amazon/callback` |
-| Organization website | `https://connected-account.me`（提交前确认与法定主体一致） |
+| Organization website | `https://connectedAccount.me`（提交前确认与法定主体一致） |
 
 Application ID、LWA Client ID 和 Secret 仅在 Solution Provider Portal 与受限生产配置中维护，不复制到审核文档或录屏字幕。
 
@@ -90,7 +90,7 @@ Authenticated ConnectedAccount employee
 | Browser OAuth flow | One-time state, authorization code | Short-lived, single-use state; HTTPS public callback |
 | 单一应用进程 | OAuth、ConnectedAccount、MCP、暂态 SP-API 响应 | 回环端口上游仅经 nginx/TLS 公开；无内部 OAuth HTTP API 和共享进程间 Secret |
 | Token store | AES-256-GCM ciphertext、IV/tag、key ID、所有权元数据 | 受限服务账号、PostgreSQL 权限和 keyring；无明文 Refresh Token 落盘 |
-| ConnectedAccount JWT verifier | issuer、audience、kid、Scope、时间声明 | 本地 `connected-account.jwtKeys` 验签；不请求外部身份服务 |
+| ConnectedAccount JWT verifier | issuer、audience、kid、Scope、时间声明 | 本地 `connectedAccount.jwtKeys` 验签；不请求外部身份服务 |
 | 缓存 | 短期 LWA Access Token、连接/区域元数据 | Redis 与进程内存；连接断开或 TTL/重启时失效 |
 | Structured logs | Event, timestamp, status, latency, request ID, hashed tenant/seller identifiers; complete `tools/call` arguments in a separate restricted JSONL | Complete arguments are retained for 168 hours and never written to ordinary stdout or PostgreSQL; ordinary logs contain no authorization header, auth code, refresh token, client secret, buyer or recipient data |
 
@@ -192,7 +192,7 @@ Submission must use the organization's approved incident policy and real contact
 
 | Claim | Repository evidence | Runtime/private evidence required |
 | --- | --- | --- |
-| Employee-bound identity | `src/identity.ts`, `src/connected-account.ts`, `src/http.ts` | ConnectedAccount JWT validation screenshot/log without token |
+| Employee-bound identity | `src/identity.ts`, `src/connectedAccount.ts`, `src/http.ts` | ConnectedAccount JWT validation screenshot/log without token |
 | Seller ownership check | `src/tools.ts`, `src/connected-account-accounts.ts`, ownership tests | Cross-Employee/account rejection test result |
 | Encrypted refresh token | `src/token-store.ts`, `src/postgres-token-store.ts` | File permissions and ciphertext inspection, no value copied |
 | Credential-safe logs | `src/logger.ts`, HTTP/LWA tests | Sanitized production log sample |

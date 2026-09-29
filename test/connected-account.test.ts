@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { test } from "node:test";
 
-import { ConnectedAccountJwtVerifier, connected-accountWorkspaceId } from "../src/connected-account.js";
+import { ConnectedAccountJwtVerifier, connectedAccountWorkspaceId } from "../src/connected-account.js";
 import { createAmazonAuthenticator } from "../src/identity.js";
 
 const NOW = 1_784_559_000;
@@ -50,10 +50,10 @@ test("verifies strict ConnectedAccount Employee JWT claims and derives an issuer
   assert.equal(identity.kid, "provider-v1");
   assert.equal(identity.expiresAt, new Date((NOW + 300) * 1_000).toISOString());
   assert.deepEqual([...identity.scopes], ["mcp:invoke", "connected_accounts:manage"]);
-  assert.equal(identity.workspaceId, connected-accountWorkspaceId("example-issuer-prod", "employee-1"));
+  assert.equal(identity.workspaceId, connectedAccountWorkspaceId("example-issuer-prod", "employee-1"));
   assert.notEqual(
     identity.workspaceId,
-    connected-accountWorkspaceId("example-issuer-staging", "employee-1"),
+    connectedAccountWorkspaceId("example-issuer-staging", "employee-1"),
   );
 });
 
@@ -92,10 +92,10 @@ test("rejects invalid ConnectedAccount JWT headers, signatures, claims, and time
 
 test("authenticator accepts only locally verified ConnectedAccount JWTs", async () => {
   const authenticate = createAmazonAuthenticator({
-    connected-accountVerifier: verifier(),
+    connectedAccountVerifier: verifier(),
   });
 
-  assert.equal((await authenticate(jwt()))?.authType, "connected-account");
+  assert.equal((await authenticate(jwt()))?.authType, "employee_jwt");
   assert.equal(await authenticate("oat_user"), null);
   assert.equal(await authenticate("old-shared-token"), null);
   assert.equal(await authenticate("wrong"), null);

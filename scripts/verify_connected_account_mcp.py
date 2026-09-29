@@ -17,7 +17,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 MAX_RESPONSE_BYTES = 1024 * 1024
 JWT_ENV_NAME = "CONNECTED_ACCOUNT_JWT"
-USER_AGENT = "build-connected-account-account-mcp-verifier/1.0"
+USER_AGENT = "build-connected-account-mcp-verifier/1.0"
 
 
 class CheckFailure(Exception):

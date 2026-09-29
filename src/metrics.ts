@@ -30,7 +30,7 @@ const ERROR_CODES = new Set([
   "protocol_error",
   "unknown",
 ]);
-const ACTOR = new Set(["connected-account", "test_agent", "unknown"]);
+const ACTOR = new Set(["employee_jwt", "test_agent", "unknown"]);
 const RESULT = new Set(["success", "error", "rejected"]);
 const OPERATION = new Set([
   "marketplace_participations",
@@ -123,7 +123,7 @@ export class MetricsRegistry {
   }>();
   #series = 0;
 
-  constructor(readonly prefix = "amazon_connected-account_") {}
+  constructor(readonly prefix = "amazon_connected_account_") {}
 
   #ensureCounter(name: string, help: string) {
     const full = this.prefix + name;

@@ -57,7 +57,7 @@ amazon:
   allowedSellingPartnerIds:
     - "A1EXAMPLESELLER"
 
-# 文件持久化目录以及可选的外部存储。启用 connected-account.enabled 时 PostgreSQL 和 Redis 均为必填。
+# 文件持久化目录以及可选的外部存储。启用 connectedAccount.enabled 时 PostgreSQL 和 Redis 均为必填。
 # 如果保留 postgres/redis 子段，每个子段都必须启用 url 或 urlFile 之一；不要把含密码的真实连接 URL 提交到 Git。
 storage:
   # 必填的绝对路径；文件模式使用 tokens.json、states.json、intents.json，并保留历史 connected-account.sqlite。
@@ -112,7 +112,7 @@ storage:
 # 连接/区域缓存固定为 30 秒/24 小时；Amazon 429 仍按上游限流错误处理。不再访问 host.docker.internal:8080 或其他身份校验服务。
 # 默认关闭；关闭时 OAuth、healthz 和 readyz 仍可用，Employee JWT 失败关闭；若 PostgreSQL 与私密 admin.sessionSecretFile 均配置，active oat_* Test Agent 仍可使用 /mcp。
 # 启用后必须同时配置 storage.postgres、storage.redis、amazon.credentialKeys 以及下方 audience、allowedOrigins、jwtKeys。
-connected-account:
+connectedAccount:
   # 功能总开关。改为 true 会启用 ConnectedAccount JWT 鉴权、MCP、发现接口和 Connected Account 流程。
   enabled: false
   # 启用时必填，表示服务接受的 JWT aud；长度为 3～256 字符，必须与令牌签发方配置完全一致。
@@ -120,14 +120,14 @@ connected-account:
   # 启用时必填，最多 20 项。每项必须是精确 HTTPS Origin，只包含协议、主机和可选端口。
   # 禁止通配符、路径、查询参数、片段以及内嵌凭证；填写实际允许发起连接流程的 ConnectedAccount 前端来源。
   # allowedOrigins:
-  #   - "https://app.connected-account.example"
+  #   - "https://app.example.com"
   # 启用时必填且不能为空。MCP 直接使用本密钥环在进程内验证签名、issuer、audience、kid、Scope 和时间声明，不会发起身份校验 HTTP 请求。
   # 可在轮换期同时保留多个 JWT 验签密钥，但 kid 必须唯一。
   # jwtKeys:
   #   # kid 长度为 1～128 字符，只允许字母、数字、点、下划线和连字符。
   #   - kid: "provider-v1"
   #     # 预期的 JWT iss，最长 512 字符，必须与签发方令牌中的值完全一致。
-  #     issuer: "https://connected-account.example"
+  #     issuer: "https://example.com"
   #     # 每项必须在 secret 与 secretFile 之间二选一；示例使用更安全的只读 Secret 文件。
   #     # 文件路径必须为绝对路径、权限为 0600 或更严格；密钥内容需为至少 32 字节的高熵 base64 或 64 位十六进制字符串。
   #     secretFile: "/run/secrets/connected-account-jwt-v1"

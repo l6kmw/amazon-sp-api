@@ -226,8 +226,8 @@ export function DashboardPage() {
             </StatusRow>
             <StatusRow>
               <span>ConnectedAccount JWT Keyring</span>
-              <StatusBadge tone={configStatus?.connected-account_keyring_status === 'ok' ? 'success' : 'warning'}>
-                {configStatus?.connected-account_keyring_status === 'ok' ? '已加载' : '待初始化'}
+              <StatusBadge tone={configStatus?.connected_account_keyring_status === 'ok' ? 'success' : 'warning'}>
+                {configStatus?.connected_account_keyring_status === 'ok' ? '已加载' : '待初始化'}
               </StatusBadge>
             </StatusRow>
           </StatusList>

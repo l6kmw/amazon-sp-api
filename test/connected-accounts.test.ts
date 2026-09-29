@@ -9,10 +9,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 import {
-  ConnectedAccountAccountError,
-  ConnectedAccountAccountStore,
+  ConnectedAccountError,
+  ConnectedAccountStore,
   type ConnectedAccountPrincipal,
-} from "../src/connected-account-accounts.js";
+} from "../src/connected-accounts.js";
 import { CONNECTED_ACCOUNT_DISCOVERY_MANIFEST } from "../src/connected-account.js";
 import { createAmazonMcpHttpApp } from "../src/http.js";
 import { createAmazonMcpServer } from "../src/tools.js";
@@ -32,7 +32,7 @@ function principal(
   scopes = new Set(["connected_accounts:manage", "mcp:invoke"]),
 ): ConnectedAccountPrincipal {
   return {
-    authType: "connected-account",
+    authType: "employee_jwt",
     tenantId: `jwt-employee:${issuer}:${employeeId}`,
     issuer,
     employeeId,
@@ -53,9 +53,9 @@ async function createStore(now = new Date("2026-07-21T10:00:00.000Z")) {
   }>>();
   const disconnected: Array<{ tenantId: string; sellingPartnerId: string }> = [];
   let disconnectFailure: Error | undefined;
-  const store = new ConnectedAccountAccountStore({
+  const store = new ConnectedAccountStore({
     file: join(directory, "connected-account.sqlite"),
-    authorizationOrigin: "https://app.connected-account.example",
+    authorizationOrigin: "https://app.example.com",
     now: () => now,
     oauth: {
       async createConnectedAccountAuthorizationURL(tenantId, attemptId, origin) {
@@ -122,18 +122,18 @@ test("keeps attempts, grants, bindings, and accounts scoped to issuer and employ
     assert.match(attempt.attemptId, /^att_[A-Za-z0-9_-]{24}$/);
     assert.equal(attempt.status, "pending");
     assert.equal(context.created[0]?.tenantId, employee.tenantId);
-    assert.equal(context.created[0]?.origin, "https://app.connected-account.example");
+    assert.equal(context.created[0]?.origin, "https://app.example.com");
     assert.equal(
       (await context.store.getAuthorizationAttempt(employee, attempt.attemptId)).status,
       "pending",
     );
     await assert.rejects(
       context.store.getAuthorizationAttempt(sameIssuerOtherEmployee, attempt.attemptId),
-      (error: unknown) => error instanceof ConnectedAccountAccountError && error.status === 404,
+      (error: unknown) => error instanceof ConnectedAccountError && error.status === 404,
     );
     await assert.rejects(
       context.store.getAuthorizationAttempt(sameEmployeeOtherIssuer, attempt.attemptId),
-      (error: unknown) => error instanceof ConnectedAccountAccountError && error.status === 404,
+      (error: unknown) => error instanceof ConnectedAccountError && error.status === 404,
     );
 
     context.completions.set(attempt.attemptId, {
@@ -165,7 +165,7 @@ test("keeps attempts, grants, bindings, and accounts scoped to issuer and employ
     );
     assert.throws(
       () => context.store.bindAccount(sameIssuerOtherEmployee, connectionId),
-      (error: unknown) => error instanceof ConnectedAccountAccountError && error.status === 404,
+      (error: unknown) => error instanceof ConnectedAccountError && error.status === 404,
     );
 
     const secondAccount = await completeAttempt(context, employee, "A2SELLER");
@@ -201,7 +201,7 @@ test("keeps attempts, grants, bindings, and accounts scoped to issuer and employ
     );
     assert.throws(
       () => context.store.bindAccount(employee, connectionId),
-      (error: unknown) => error instanceof ConnectedAccountAccountError && error.status === 404,
+      (error: unknown) => error instanceof ConnectedAccountError && error.status === 404,
     );
   } finally {
     context.store.close();
@@ -264,7 +264,7 @@ test("shares active bindings within one issuer without transferring ownership", 
     assert.equal(context.store.listAccounts(shared).length, 0);
     assert.throws(
       () => context.store.shareAccount(owner, connectionId, otherIssuer),
-      (error: unknown) => error instanceof ConnectedAccountAccountError && error.status === 404,
+      (error: unknown) => error instanceof ConnectedAccountError && error.status === 404,
     );
 
     assert.equal(context.store.shareAccount(owner, connectionId, shared).created, true);
@@ -276,7 +276,7 @@ test("shares active bindings within one issuer without transferring ownership", 
     assert.equal(context.store.listAccounts(unbound).length, 0);
     assert.throws(
       () => context.store.resolveAccount(unbound, accountId),
-      (error: unknown) => error instanceof ConnectedAccountAccountError && error.status === 404,
+      (error: unknown) => error instanceof ConnectedAccountError && error.status === 404,
     );
 
     context.store.unbindAccount(shared, connectionId);
@@ -290,7 +290,7 @@ test("shares active bindings within one issuer without transferring ownership", 
     context.store.shareAccount(owner, connectionId, shared);
     await assert.rejects(
       context.store.disconnect(shared, connectionId),
-      (error: unknown) => error instanceof ConnectedAccountAccountError && error.status === 404,
+      (error: unknown) => error instanceof ConnectedAccountError && error.status === 404,
     );
     await context.store.disconnect(owner, connectionId);
     assert.deepEqual(context.disconnected, [{
@@ -322,14 +322,14 @@ test("resolves only active accounts owned and bound by the current employee", as
     for (const actor of [otherEmployee, otherIssuer]) {
       assert.throws(
         () => context.store.resolveAccount(actor, accountId),
-        (error: unknown) => error instanceof ConnectedAccountAccountError && error.status === 404,
+        (error: unknown) => error instanceof ConnectedAccountError && error.status === 404,
       );
     }
 
     context.store.unbindAccount(employee, connectionId);
     assert.throws(
       () => context.store.resolveAccount(employee, accountId),
-      (error: unknown) => error instanceof ConnectedAccountAccountError && error.status === 404,
+      (error: unknown) => error instanceof ConnectedAccountError && error.status === 404,
     );
     context.store.bindAccount(employee, connectionId);
     assert.equal((await context.store.refreshAccounts(employee))[0]?.externalAccountId, "A1OWNED");
@@ -342,7 +342,7 @@ test("resolves only active accounts owned and bound by the current employee", as
     await context.store.disconnect(employee, disconnectedId);
     assert.throws(
       () => context.store.resolveAccount(employee, disconnectedAccountId),
-      (error: unknown) => error instanceof ConnectedAccountAccountError && error.status === 404,
+      (error: unknown) => error instanceof ConnectedAccountError && error.status === 404,
     );
   } finally {
     context.store.close();
@@ -374,8 +374,8 @@ test("serves the ConnectedAccount lifecycle and exposes only bound accounts thro
     host: "127.0.0.1",
     allowedHosts: ["127.0.0.1", "localhost"],
     version: "0.1.0",
-    connected-accountManifest: CONNECTED_ACCOUNT_DISCOVERY_MANIFEST,
-    connected-accountAccounts: context.store,
+    connectedAccountManifest: CONNECTED_ACCOUNT_DISCOVERY_MANIFEST,
+    connectedAccountService: context.store,
     authenticate: async (token) => token === "employee-jwt"
       ? employee
       : token === "invoke-only-jwt"

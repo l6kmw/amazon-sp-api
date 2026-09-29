@@ -31,7 +31,7 @@ curl --fail http://127.0.0.1:8789/readyz | jq .
 - Refresh Token 密钥轮换：先保留新旧 key，执行 dry-run，再 `--apply`，观察后才移除旧 key。
 - 不得恢复 `8788`、`oauth.internalSecret`、`AMAZON_INTERNAL_SECRET`、`AMAZON_OAUTH_INTERNAL_URL` 或 `/internal/amazon/*`。
 - 不得恢复 `mcp` YAML 分区、全局共享 Bearer Token 或对 `host.docker.internal:8080` 的身份校验请求；`oat_*` 只能是数据库 Hash 校验、独立 Agent 归属、可轮换/吊销的一次性返回 Token。
-- `connected-account.enabled=false` 只关闭 Employee JWT；若 PostgreSQL + 私密 Session Secret 已启用控制面，active Test Agent 仍可按 Scope 调用 `/mcp`。两类凭据均不可 fallback 为另一类。
+- `connectedAccount.enabled=false` 只关闭 Employee JWT；若 PostgreSQL + 私密 Session Secret 已启用控制面，active Test Agent 仍可按 Scope 调用 `/mcp`。两类凭据均不可 fallback 为另一类。
 - `admin.oa` 启用后，本地密码登录关闭；只有精确配置的 OIDC `issuer + sub` 可映射为固定管理员。OA 回调固定为 `amazon.publicOrigin + /api/v1/admin/oa/callback`，OA Client Secret 只能放在 `0600` Secret File。
 - `config.yaml`、Secret File、备份文件不得允许 group/other 读取。
 

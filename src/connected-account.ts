@@ -69,7 +69,7 @@ function hasAudience(value: unknown, expected: string): boolean {
   return Array.isArray(value) && value.some((item) => item === expected);
 }
 
-export function connected-accountWorkspaceId(issuer: string, employeeId: string): string {
+export function connectedAccountWorkspaceId(issuer: string, employeeId: string): string {
   const issuerHash = createHash("sha256").update(issuer).digest().subarray(0, 12);
   return `jwt-employee:${issuerHash.toString("base64url")}:${employeeId}`;
 }
@@ -150,7 +150,7 @@ export class ConnectedAccountJwtVerifier {
     return {
       issuer: key.issuer,
       employeeId: payload.sub,
-      workspaceId: connected-accountWorkspaceId(key.issuer, payload.sub),
+      workspaceId: connectedAccountWorkspaceId(key.issuer, payload.sub),
       kid: key.kid,
       expiresAt: new Date(payload.exp * 1_000).toISOString(),
       scopes,

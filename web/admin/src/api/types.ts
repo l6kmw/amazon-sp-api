@@ -130,7 +130,7 @@ export interface AmazonConfigStatus {
   postgres_status: 'ok' | 'error'
   redis_status: 'ok' | 'error'
   credential_keyring_status: 'ok' | 'error'
-  connected-account_keyring_status: 'ok' | 'error'
+  connected_account_keyring_status: 'ok' | 'error'
 }
 
 export interface MCPConfigInfo {

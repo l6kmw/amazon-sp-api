@@ -17,10 +17,10 @@ import { registerAdminOaRoutes, type AdminOaOptions } from "./admin-oa.js";
 import { registerAdminSessionRoutes, type AdminSessionManager } from "./admin-session.js";
 import type { AmazonPrincipal } from "./identity.js";
 import {
-  ConnectedAccountAccountError,
-  type ConnectedAccountAccountService,
+  ConnectedAccountError,
+  type ConnectedAccountService,
   type ConnectedAccountPrincipal,
-} from "./connected-account-accounts.js";
+} from "./connected-accounts.js";
 import {
   normalizeRequestId,
   runWithToolRequestContext,
@@ -34,7 +34,7 @@ import {
 } from "./mcp-argument-logger.js";
 import { isLoopbackAddress, mcpMetrics } from "./metrics.js";
 import { PUBLIC_MCP_PATH } from "./portal.js";
-import type { PostgresConnectedAccountAccountStore } from "./postgres-connected-account-accounts.js";
+import type { PostgresConnectedAccountStore } from "./postgres-connected-accounts.js";
 import {
   registerAmazonPortal,
   type AmazonPortalOptions,
@@ -76,7 +76,7 @@ function methodNotAllowed(response: Response): void {
 }
 
 function hasConnectedAccountScope(principal: AmazonPrincipal, scope: string): boolean {
-  return principal.authType === "connected-account" && principal.scopes.has(scope);
+  return principal.authType === "employee_jwt" && principal.scopes.has(scope);
 }
 
 const CONNECTED_ACCOUNT_CATALOG_METHODS = new Set([
@@ -94,8 +94,8 @@ function hasMcpAccess(principal: AmazonPrincipal, request: Request): boolean {
   return CONNECTED_ACCOUNT_CATALOG_METHODS.has(request.body?.method);
 }
 
-function connected-accountError(response: Response, error: unknown): void {
-  if (error instanceof ConnectedAccountAccountError) {
+function connectedAccountError(response: Response, error: unknown): void {
+  if (error instanceof ConnectedAccountError) {
     response.status(error.status).json({ error: { code: error.code, message: error.message } });
     return;
   }
@@ -107,24 +107,24 @@ function connected-accountError(response: Response, error: unknown): void {
 function objectBody(request: Request, allowedKeys: readonly string[]): Record<string, unknown> {
   const body = request.body;
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
-    throw new ConnectedAccountAccountError(400, "invalid_request", "Request body must be an object");
+    throw new ConnectedAccountError(400, "invalid_request", "Request body must be an object");
   }
   if (Object.keys(body).some((key) => !allowedKeys.includes(key))) {
-    throw new ConnectedAccountAccountError(400, "invalid_request", "Request body contains unknown fields");
+    throw new ConnectedAccountError(400, "invalid_request", "Request body contains unknown fields");
   }
   return body as Record<string, unknown>;
 }
 
 function connectionId(value: unknown): string {
   if (typeof value !== "string" || !/^con_[A-Za-z0-9_-]{16,128}$/.test(value)) {
-    throw new ConnectedAccountAccountError(400, "invalid_request", "connectionId is invalid");
+    throw new ConnectedAccountError(400, "invalid_request", "connectionId is invalid");
   }
   return value;
 }
 
 function attemptId(value: unknown): string {
   if (typeof value !== "string" || !/^att_[A-Za-z0-9_-]{16,128}$/.test(value)) {
-    throw new ConnectedAccountAccountError(400, "invalid_request", "attemptId is invalid");
+    throw new ConnectedAccountError(400, "invalid_request", "attemptId is invalid");
   }
   return value;
 }
@@ -165,12 +165,12 @@ export function createAmazonMcpHttpApp(options: {
   readinessCheck?: () => Promise<ReadinessResult>;
   logger?: StructuredLogger;
   argumentLogger?: Pick<McpArgumentLogger, "log">;
-  connected-accountManifest?: typeof CONNECTED_ACCOUNT_DISCOVERY_MANIFEST;
-  connected-accountAccounts?: ConnectedAccountAccountService;
+  connectedAccountManifest?: typeof CONNECTED_ACCOUNT_DISCOVERY_MANIFEST;
+  connectedAccountService?: ConnectedAccountService;
   adminSessions?: AdminSessionManager;
   adminAgents?: AdminAgentService;
   adminAudits?: AdminAuditService;
-  adminBindingAccounts?: PostgresConnectedAccountAccountStore;
+  adminBindingAccounts?: PostgresConnectedAccountStore;
   adminDashboard?: AdminDashboardDeps;
   adminAds?: AdminAdsService;
   adminOa?: AdminOaOptions;
@@ -312,10 +312,10 @@ export function createAmazonMcpHttpApp(options: {
     }
   }
 
-  if (options.connected-accountManifest) {
+  if (options.connectedAccountManifest) {
     app.get("/.well-known/connected-account", (_request, response) => {
       response.setHeader("cache-control", "no-store");
-      response.json(options.connected-accountManifest);
+      response.json(options.connectedAccountManifest);
     });
 
     app.get("/connected-account/v1/auth/check", async (request, response) => {
@@ -323,7 +323,7 @@ export function createAmazonMcpHttpApp(options: {
       const principal = options.authenticate
         ? await options.authenticate(bearerToken(request))
         : null;
-      if (!principal || principal.authType !== "connected-account") {
+      if (!principal || principal.authType !== "employee_jwt") {
         response.setHeader("www-authenticate", "Bearer");
         response.status(401).json({ error: { code: "unauthorized", message: "Unauthorized" } });
         return;
@@ -341,7 +341,7 @@ export function createAmazonMcpHttpApp(options: {
       });
     });
 
-    if (options.connected-accountAccounts) {
+    if (options.connectedAccountService) {
       const manage = (
         handler: (
           request: Request,
@@ -353,7 +353,7 @@ export function createAmazonMcpHttpApp(options: {
         const principal = options.authenticate
           ? await options.authenticate(bearerToken(request))
           : null;
-        if (!principal || principal.authType !== "connected-account") {
+        if (!principal || principal.authType !== "employee_jwt") {
           response.setHeader("www-authenticate", "Bearer");
           response.status(401).json({ error: { code: "unauthorized", message: "Unauthorized" } });
           return;
@@ -367,17 +367,17 @@ export function createAmazonMcpHttpApp(options: {
         try {
           await handler(request, response, principal);
         } catch (error) {
-          connected-accountError(response, error);
+          connectedAccountError(response, error);
         }
       };
 
       app.get("/connected-account/v1/accounts", manage(async (_request, response, principal) => {
-        response.json({ items: await options.connected-accountAccounts!.listAccounts(principal) });
+        response.json({ items: await options.connectedAccountService!.listAccounts(principal) });
       }));
 
       app.post("/connected-account/v1/accounts/refresh", manage(async (request, response, principal) => {
         if (request.body !== undefined) objectBody(request, []);
-        response.json({ items: await options.connected-accountAccounts!.refreshAccounts(principal) });
+        response.json({ items: await options.connectedAccountService!.refreshAccounts(principal) });
       }));
 
       app.post("/connected-account/v1/accounts/lookup", manage(async (request, response, principal) => {
@@ -387,14 +387,14 @@ export function createAmazonMcpHttpApp(options: {
           body.connectionIds.length > 100 ||
           body.connectionIds.some((value) => typeof value !== "string")
         ) {
-          throw new ConnectedAccountAccountError(
+          throw new ConnectedAccountError(
             400,
             "invalid_request",
             "connectionIds must be an array of at most 100 strings",
           );
         }
         const ids = [...new Set(body.connectionIds.map(connectionId))];
-        response.json({ items: await options.connected-accountAccounts!.lookupAccounts(principal, ids) });
+        response.json({ items: await options.connectedAccountService!.lookupAccounts(principal, ids) });
       }));
 
       app.post("/connected-account/v1/authorization-attempts", manage(async (
@@ -403,7 +403,7 @@ export function createAmazonMcpHttpApp(options: {
         principal,
       ) => {
         if (request.body !== undefined) objectBody(request, []);
-        const attempt = await options.connected-accountAccounts!.createAuthorizationAttempt(principal);
+        const attempt = await options.connectedAccountService!.createAuthorizationAttempt(principal);
         response.status(201).json(attempt);
       }));
 
@@ -412,7 +412,7 @@ export function createAmazonMcpHttpApp(options: {
         response,
         principal,
       ) => {
-        const attempt = await options.connected-accountAccounts!.getAuthorizationAttempt(
+        const attempt = await options.connectedAccountService!.getAuthorizationAttempt(
           principal,
           attemptId(request.params.attemptId),
         );
@@ -421,7 +421,7 @@ export function createAmazonMcpHttpApp(options: {
 
       app.post("/connected-account/v1/account-bindings", manage(async (request, response, principal) => {
         const body = objectBody(request, ["connectionId"]);
-        const result = await options.connected-accountAccounts!.bindAccount(
+        const result = await options.connectedAccountService!.bindAccount(
           principal,
           connectionId(body.connectionId),
         );
@@ -435,13 +435,13 @@ export function createAmazonMcpHttpApp(options: {
       ) => {
         const body = objectBody(request, ["remark"]);
         if (typeof body.remark !== "string" || [...body.remark].length > 80) {
-          throw new ConnectedAccountAccountError(
+          throw new ConnectedAccountError(
             400,
             "invalid_request",
             "remark must contain at most 80 Unicode characters",
           );
         }
-        response.json(await options.connected-accountAccounts!.updateRemark(
+        response.json(await options.connectedAccountService!.updateRemark(
           principal,
           connectionId(request.params.connectionId),
           body.remark,
@@ -453,7 +453,7 @@ export function createAmazonMcpHttpApp(options: {
         response,
         principal,
       ) => {
-        await options.connected-accountAccounts!.unbindAccount(
+        await options.connectedAccountService!.unbindAccount(
           principal,
           connectionId(request.params.connectionId),
         );
@@ -465,7 +465,7 @@ export function createAmazonMcpHttpApp(options: {
         response,
         principal,
       ) => {
-        await options.connected-accountAccounts!.disconnect(
+        await options.connectedAccountService!.disconnect(
           principal,
           connectionId(request.params.connectionId),
         );
@@ -508,7 +508,7 @@ export function createAmazonMcpHttpApp(options: {
       return;
     }
     const actorIdHash = logger.hash(
-      principal.authType === "connected-account" ? principal.employeeId : principal.agentId,
+      principal.authType === "employee_jwt" ? principal.employeeId : principal.agentId,
     );
     if (!hasMcpAccess(principal, request)) {
       logger.write("warn", "mcp.scope.rejected", {
@@ -558,7 +558,7 @@ export function createAmazonMcpHttpApp(options: {
       : undefined;
     const actorType = actorTypeFromAuth(principal.authType);
     const actorIdHash = logger.hash(
-      principal.authType === "connected-account" ? principal.employeeId : principal.agentId,
+      principal.authType === "employee_jwt" ? principal.employeeId : principal.agentId,
     );
     const methodLabel = METHODS_FOR_LOG.has(method) ? method : "unknown";
     const argumentCalls = toolArgumentCalls(request.body);
@@ -659,7 +659,7 @@ export function createAmazonMcpHttpApp(options: {
         if (toolContext.failureCode && options.adminAudits) {
           try {
             await options.adminAudits.record({
-              actorType: principal.authType === "connected-account" ? "employee_jwt" : "agent_token",
+              actorType: principal.authType === "employee_jwt" ? "employee_jwt" : "agent_token",
               actorId: actorIdHash ?? "unknown",
               agentRecordId: principal.authType === "test_agent"
                 ? principal.agentRecordId

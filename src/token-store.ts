@@ -29,7 +29,7 @@ export interface StoredToken {
   tenantId?: string;
   revision?: number;
   tokenType?: string;
-  connected-accountAttemptId?: string;
+  connectedAccountAttemptId?: string;
 }
 
 export type TokenFile = Record<string, StoredToken>;
@@ -71,7 +71,7 @@ export interface ConnectionStore extends RefreshTokenProvider {
     sellingPartnerId: string,
     tenantId: string,
     tokenResponse: { refresh_token: string; token_type?: string },
-    metadata?: { connected-accountAttemptId?: string },
+    metadata?: { connectedAccountAttemptId?: string },
   ): Promise<void>;
   list(tenantId: string): Promise<AmazonConnection[]>;
   disconnect(tenantId: string, sellingPartnerId: string): Promise<boolean>;
@@ -202,7 +202,7 @@ export class EncryptedFileTokenStore implements ConnectionStore {
     sellingPartnerId: string,
     tenantId: string,
     tokenResponse: { refresh_token: string; token_type?: string },
-    metadata: { connected-accountAttemptId?: string } = {},
+    metadata: { connectedAccountAttemptId?: string } = {},
   ): Promise<void> {
     await this.#run(async () => {
       const tokens = await this.#readTokens(false);
@@ -215,7 +215,7 @@ export class EncryptedFileTokenStore implements ConnectionStore {
         tenantId,
         tokenType: tokenResponse.token_type || "bearer",
         revision: previousRevision + 1,
-        ...(metadata.connected-accountAttemptId ? { connected-accountAttemptId: metadata.connected-accountAttemptId } : {}),
+        ...(metadata.connectedAccountAttemptId ? { connectedAccountAttemptId: metadata.connectedAccountAttemptId } : {}),
       };
       await this.#writeTokens(tokens);
     });
@@ -251,7 +251,7 @@ export class EncryptedFileTokenStore implements ConnectionStore {
     return this.#run(async () => {
       const tokens = await this.#readTokens(false);
       for (const [sellingPartnerId, token] of Object.entries(tokens)) {
-        if (token.tenantId === tenantId && token.connected-accountAttemptId === attemptId) {
+        if (token.tenantId === tenantId && token.connectedAccountAttemptId === attemptId) {
           return { authorizedAt: token.authorizedAt ?? "", sellingPartnerId };
         }
       }

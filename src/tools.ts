@@ -133,7 +133,7 @@ const amazonRegion = z.enum(["na", "eu", "fe"]);
 const REGION_PROBE_ORDER: AmazonRegion[] = ["na", "eu", "fe"];
 export const SEARCH_ORDERS_BUDGET_MS = 50_000;
 const SERVER_INSTRUCTIONS = [
-  "先调用 amazon_get_identity 和 amazon_list_accounts；账号授权、续期和断开均通过 /connected-account/v1 Connected Account 接口管理。",
+  "先调用 amazon_get_identity 和 amazon_list_accounts；账号授权、续期和断开通过本地 /api/v1/accounts 接口管理。",
   "所有 Amazon 业务工具必须使用 amazon_list_accounts 返回的 account_id，不能直接传 Selling Partner ID。",
   "amazon_search_orders 的 createdAfter 与 lastUpdatedAfter 必须二选一，时间使用带 offset 的 ISO-8601。",
   "一次请求的多个 marketplace 必须属于同一区域（na/eu/fe）。",

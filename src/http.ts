@@ -58,7 +58,6 @@ import {
   runWithToolRequestContext,
   type ToolRequestContext,
 } from "./errors.js";
-import { CONNECTED_ACCOUNT_DISCOVERY_MANIFEST, CONNECTED_ACCOUNT_PROTOCOL_SCOPES } from "./connected-account.js";
 import { actorTypeFromAuth, NULL_LOGGER, type StructuredLogger } from "./logger.js";
 import {
   NULL_MCP_ARGUMENT_LOGGER,
@@ -196,7 +195,6 @@ export function createAmazonMcpHttpApp(options: {
   readinessCheck?: () => Promise<ReadinessResult>;
   logger?: StructuredLogger;
   argumentLogger?: Pick<McpArgumentLogger, "log">;
-  connectedAccountManifest?: typeof CONNECTED_ACCOUNT_DISCOVERY_MANIFEST;
   connectedAccountService?: ConnectedAccountService;
   portal?: AmazonPortalOptions;
   operator?: OperatorProfile;
@@ -413,9 +411,7 @@ export function createAmazonMcpHttpApp(options: {
       ? (typeof request.body?.params?.name === "string" ? request.body.params.name : "unknown")
       : undefined;
     const actorType = actorTypeFromAuth(principal.authType);
-    const actorIdHash = logger.hash(
-      principal.authType === "employee_jwt" ? principal.employeeId : principal.agentId,
-    );
+    const actorIdHash = logger.hash(principal.employeeId);
     const methodLabel = METHODS_FOR_LOG.has(method) ? method : "unknown";
     const argumentCalls = toolArgumentCalls(request.body);
     const toolContext: ToolRequestContext = {

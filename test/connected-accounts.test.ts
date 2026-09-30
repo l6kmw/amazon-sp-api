@@ -13,7 +13,6 @@ import {
   ConnectedAccountStore,
   type ConnectedAccountPrincipal,
 } from "../src/connected-accounts.js";
-import { CONNECTED_ACCOUNT_DISCOVERY_MANIFEST } from "../src/connected-account.js";
 import { createAmazonMcpHttpApp } from "../src/http.js";
 import { LOCAL_ACCOUNT_PRINCIPAL, LOCAL_OWNER } from "../src/local-identity.js";
 import { createAmazonMcpServer } from "../src/tools.js";

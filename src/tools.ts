@@ -313,7 +313,7 @@ function successResult(schema: z.ZodTypeAny, value: unknown) {
 }
 
 function publicIdentityId(principal: AmazonPrincipal): string {
-  return principal.authType === "employee_jwt" ? principal.employeeId : principal.agentId;
+  return principal.employeeId;
 }
 
 function snapshotSummary(options: {

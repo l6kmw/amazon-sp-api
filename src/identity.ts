@@ -1,6 +1,12 @@
-import type { ConnectedAccountJwtVerifier } from "./connected-account.js";
-
-export interface ConnectedAccountEmployeePrincipal {
+/**
+ * Single-user identity surface.
+ *
+ * This build has no Employee JWT and no agent tokens: every request runs as the
+ * fixed local owner defined in `local-identity.ts`. The principal type below is
+ * kept because the tool layer, logger and metrics all describe their caller
+ * through it.
+ */
+export interface LocalOwnerPrincipal {
   authType: "employee_jwt";
   credentialKind?: "employee_jwt";
   tenantId: string;
@@ -11,39 +17,4 @@ export interface ConnectedAccountEmployeePrincipal {
   scopes: ReadonlySet<string>;
 }
 
-export interface TestAgentPrincipal {
-  authType: "test_agent";
-  credentialKind: "test_agent_token";
-  tenantId: "tenant-1";
-  agentRecordId: string;
-  agentId: string;
-  scopes: ReadonlySet<string>;
-}
-
-export type AmazonPrincipal = ConnectedAccountEmployeePrincipal | TestAgentPrincipal;
-
-export function createAmazonAuthenticator(options: {
-  connectedAccountVerifier?: ConnectedAccountJwtVerifier;
-  authenticateTestAgent?: (token: string) => Promise<TestAgentPrincipal | null>;
-}) {
-  return async (token: string): Promise<AmazonPrincipal | null> => {
-    try {
-      if (token.startsWith("oat_")) {
-        return await options.authenticateTestAgent?.(token) ?? null;
-      }
-      const identity = options.connectedAccountVerifier?.verify(token);
-      return identity ? {
-        authType: "employee_jwt",
-        credentialKind: "employee_jwt",
-        tenantId: identity.workspaceId,
-        issuer: identity.issuer,
-        employeeId: identity.employeeId,
-        kid: identity.kid,
-        expiresAt: identity.expiresAt,
-        scopes: identity.scopes,
-      } : null;
-    } catch {
-      return null;
-    }
-  };
-}
+export type AmazonPrincipal = LocalOwnerPrincipal;

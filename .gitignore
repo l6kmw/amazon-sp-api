@@ -10,3 +10,6 @@ dist/
 config.yaml
 config.local.yaml
 data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

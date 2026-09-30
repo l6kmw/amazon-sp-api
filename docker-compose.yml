@@ -27,10 +27,6 @@ services:
       - type: bind
         source: ./data
         target: /data
-    # 仅为用户在 config.yaml 中明确配置的宿主机 PostgreSQL/Redis 保留；
-    # 应用不会自动访问宿主机 8080 或任何外部身份服务。
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     security_opt:
       - no-new-privileges:true
     cap_drop:

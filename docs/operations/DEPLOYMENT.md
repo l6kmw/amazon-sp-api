@@ -1,176 +1,94 @@
-# Amazon 双 MCP 部署手册
+# 部署手册
 
-本文描述当前 Amazon SP-API 与 Amazon Ads 两个独立 MCP 的部署方式。SP-API 包内部仍保持单包、单进程、单端口；Ads 使用独立包、进程、端口、Provider、JWT audience、OAuth 凭据和数据目录。
+单用户本地部署：一个进程、一个本地数据目录，不需要 PostgreSQL、Redis 或任何外部身份系统。
+MCP 不做认证，因此服务只应监听回环地址。
 
 ## 1. 运行模型
 
-SP-API 入口为 `amazon-sp-api/dist/server.js`，内部端口为 `8789`。Ads 入口为 `amazon-ads-mcp/dist/server.js`，内部端口为 `8790`。两个容器共享网络命名空间，使 SP 管理端只能通过回环地址读取 Ads 的脱敏管理投影；进程、镜像、配置、数据和 Amazon 凭据保持独立。
+入口为 `dist/server.js`，内部端口固定 `8789`（不接受 YAML 覆盖）。
 
 ```text
-Amazon / 用户 / Agent
-        │ HTTPS
+浏览器 / MCP 客户端
+        │ HTTP（仅回环）
         ▼
-      Nginx
-        ├── 127.0.0.1:8789 -> amazon-sp-api
-        │                         ├── PostgreSQL / Redis
-        │                         └── /data
-        └── 127.0.0.1:8790 -> amazon-ads-mcp
-                                  └── /data/amazon-ads
+  127.0.0.1:8789  amazon-sp-api
+        └── /var/lib/amazon-sp-api（tokens/states/intents）
 ```
 
-不再部署 OAuth `8788`、第二个 systemd 单元、容器 entrypoint 进程管理器或内部 OAuth HTTP API。
+若要公网访问，必须在前置 Nginx 上完成认证，并且只把回环上游暴露给它。
 
 ## 2. 上线前准备
 
-要求：
+- Node.js `>=22.13.0` 与 Bun（源码运行），或 Docker/Compose。
+- Amazon LWA Client ID 与 Client Secret。
+- Amazon Portal 中登记的 Redirect URI 与 `amazon.publicOrigin + /oauth/amazon/callback` 完全一致。
+- 一个可写的绝对路径作为 `storage.dataDirectory`。
 
-- Node.js `>=22.13.0`，Bun `1.3.6`；或 Docker/Compose。
-- 公网 HTTPS 域名和反向代理。
-- Amazon Portal 中的 Redirect URI 与 `amazon.publicOrigin + /oauth/amazon/callback` 完全一致。
-- 独立 Amazon Ads LWA 应用中的 Redirect URI 与 `ads.publicOrigin + /oauth/amazon-ads/callback` 完全一致。
-- `config.yaml` 权限 `0600`，数据目录权限 `0700`。
-- 文件模式升级时可安排短暂停机；PostgreSQL/Redis 模式可先使用临时宿主端口验证。
-
-先备份：
+先备份现有部署：
 
 ```bash
-cp -p config.yaml config.yaml.before-single-service
-tar -C data -czf amazon-sp-api-data-before-single-service.tgz .
-tar -C ../amazon-ads-mcp/data -czf amazon-ads-data-before-release.tgz .
-pg_dump --format=custom --file=amazon-sp-api-before-single-service.dump "$DATABASE_URL"
+cp -p config.yaml config.yaml.bak
+tar -C /var/lib/amazon-sp-api -czf amazon-sp-api-data-$(date +%F).tgz .
 ```
 
-另行保留两个旧镜像和旧 Compose。历史“SP OAuth/MCP 双进程”配置不再使用；当前 Ads 独立进程不属于该历史布局。不要把备份或真实密钥提交到仓库。
-
-## 3. 生成独立配置
+## 3. 生成配置
 
 ```bash
 cp config.example.yaml config.yaml
 chmod 600 config.yaml
-openssl rand -base64 32
+openssl rand -base64 32   # 填入 amazon.credentialKeys.keys[].secret
 ```
 
-从旧配置迁移时：
+`config.yaml` 顶层只有三块：`server`、`amazon`、`storage`（以及可选的 `operator`，用于
+`/company` 与 `/privacy` 法务页面）。加载器严格拒绝未知字段、重复键、弱密钥和不安全 URL。
 
-1. 将 `server.oauth`、`server.mcp` 合并为 `server.host`、`server.allowedHosts`，并删除 `server.port`；内部端口固定为 `8789`。
-2. 删除整个 `oauth` 分区，把 `oauth.dataDirectory` 原值移动到 `storage.dataDirectory`。
-3. 删除 `amazon.oauthRedirectUri`；确认 Amazon Portal 登记值等于 `amazon.publicOrigin + /oauth/amazon/callback`。
-4. 将 `amazon.tokenEncryptionKey: <原值>` 改为 `amazon.credentialKeys.currentKeyId: k0`，并把原值放入 `keys` 的 `keyId: k0` 条目；无需重加密现有 Token。
-5. 删除整个 `mcp` 分区，包括 `identityValidationUrl`、`identityHealthUrl`、`enableListingsTools`、`limits`、`cache` 和所有 Legacy Auth 字段。MCP 接受 `connectedAccount.jwtKeys` 本地验签的 Employee JWT；仅在 PostgreSQL 与私密 `admin.sessionSecretFile` 均配置时，额外接受数据库中 active Test Agent 的独立 `oat_*` Token。
-6. 删除 `storage.postgres.schema`；数据库 Schema 固定为 `amazon_sp_api`。
-7. 若启用统一 OA，配置 `admin.oa.issuer/clientId/clientSecretFile/subject`，并在 OA 注册固定回调 `amazon.publicOrigin + /api/v1/admin/oa/callback`。启用后 `POST /api/v1/admin/session` 关闭，不能把本地密码登录作为旁路。
-
-Ads 从 `../amazon-ads-mcp/config.example.yaml` 生成独立 `config.yaml`。必须使用 Ads 专属 LWA Client、Client Secret、Token 加密 keyring 和 `amazon-ads-account-service` audience；不要复用 SP-API 的 LWA 或 Token 加密密钥。Employee JWT 的签发方可以相同，但 audience 必须独立。
-
-加载器严格拒绝旧布局、未知字段、重复键、弱密钥、过宽权限和不安全 URL，不会静默猜测。
-
-## 4. 本地构建验收
+## 4. 本地验收
 
 ```bash
 bun install --frozen-lockfile
-bun run test
 bun run typecheck
+bun run test
 bun run build
-bun run test:docker-config
 git diff --check
 ```
 
-如需完整镜像门禁：
+完整的发布门禁（含只读验收脚本测试与差异检查）：
 
 ```bash
-CI_GATE_DOCKER_IMAGE=true bun run ci-gate
+bun run ci-gate
 ```
 
-镜像验证会确认 `/app/dist/server.js` 可导入，运行时没有 Bun，也没有旧 `amazon-oauth-service`、`amazon-sp-api-mcp` 子包。
-
-## 5. Compose 部署
+## 5. Docker 部署
 
 ```bash
 install -d -m 0700 data
-install -d -m 0700 ../amazon-ads-mcp/data ../amazon-ads-mcp/secrets
 sudo chown 10001:10001 config.yaml data
-sudo chown 10002:10002 ../amazon-ads-mcp/config.yaml ../amazon-ads-mcp/data ../amazon-ads-mcp/secrets
 sudo chmod 0600 config.yaml
-export AMAZON_IMAGE_REVISION="$(git rev-parse HEAD)"
 export AMAZON_IMAGE_TAG="$(git rev-parse --short=12 HEAD)"
-export AMAZON_ADS_IMAGE_REVISION="$AMAZON_IMAGE_REVISION"
-export AMAZON_ADS_IMAGE_TAG="$AMAZON_IMAGE_TAG"
-export AMAZON_PLATFORM=linux/amd64
 docker compose build
 docker compose up -d
 docker compose ps
 ```
 
-镜像固定以 UID/GID `10001:10001` 运行。`config.yaml` 使用 `0600`、`data/` 使用 `0700` 时，
-两者必须归该 UID/GID 所有，否则容器无法读取配置或写入数据。部署阿里云镜像仓库版本时，
-将 `AMAZON_IMAGE_REPOSITORY` 设为完整仓库路径并使用同一个不可变提交标签；不要使用 `latest`。
+镜像固定以 UID/GID `10001:10001` 运行，`config.yaml`（0600）与 `data/`（0700）必须归该用户所有，
+否则容器无法读取配置或写入数据。Compose 只绑定 `127.0.0.1:${AMAZON_PORT:-8789}`。
 
-Compose 只绑定宿主机回环：
-
-```text
-127.0.0.1:${AMAZON_PORT:-8789} -> 容器 8789
-127.0.0.1:${AMAZON_ADS_PORT:-8790} -> Ads 容器 8790
-```
-
-不要配置 `AMAZON_OAUTH_PORT` 或暴露 `8788`。
+推送镜像仓库时应使用不可变提交标签，不要用 `latest`。
 
 验证：
 
 ```bash
 curl --fail http://127.0.0.1:${AMAZON_PORT:-8789}/healthz | jq .
 curl --fail http://127.0.0.1:${AMAZON_PORT:-8789}/readyz | jq .
-curl --fail http://127.0.0.1:${AMAZON_ADS_PORT:-8790}/healthz | jq .
-docker compose exec amazon-ads-mcp node -e 'fetch("http://127.0.0.1:8790/readyz").then(async r => { console.log(await r.text()); process.exit(r.ok ? 0 : 1) })'
-docker compose exec amazon-sp-api sh -c 'test "$(ls /proc/1/task | wc -l)" -ge 1'
 ```
 
-`/healthz` 应返回 HTTP 200 和 `status/version/tools/lwaConfigured`；`/readyz` 仅在 `lwa`、`tokenStore`、`encryptionKey` 及已配置的 PostgreSQL/Redis 全部正常时返回 200。它不检查外部 identity 端点。
+`/healthz` 返回 `status/version/tools/lwaConfigured`；`/readyz` 检查 `lwa`、`tokenStore` 与
+`encryptionKey` 三项，任一异常返回 503。
 
-Employee JWT 未启用时，`/mcp` 对 Employee JWT 返回 401；若 PostgreSQL 与私密 `admin.sessionSecretFile` 已配置，数据库中 active Test Agent 的独立 `oat_*` 仍可按 Scope 访问同一 `/mcp`。Employee JWT 启用后必须配置 PostgreSQL、Redis、`connectedAccount.audience`、HTTPS `allowedOrigins` 和 `jwtKeys`。
+## 6. systemd 部署
 
-## 6. Nginx 切换
-
-参考 `deploy/api.example.com.nginx`。关键映射：
-
-| 公网路径 | 单一上游 |
-| --- | --- |
-| `/`、`/admin-config.js`、`/assets/*` | 管理 SPA 与 no-store runtime config |
-| `/company` | 无需登录和 JavaScript 的公开公司信息页 |
-| `/privacy` | 无需登录的公开隐私声明页 |
-| `/api/v1/admin/*` | 管理 Session/CSRF 控制面与 OA OIDC 登录/回调 |
-| `/amazon/api/*` | `127.0.0.1:8789` |
-| `/oauth/amazon/*` | `127.0.0.1:8789` |
-| `/oauth/amazon-ads/*` | `127.0.0.1:8790` |
-| `/mcp/amazon`、`/mcp/amazon/healthz` | `127.0.0.1:8789/mcp`、`/mcp/healthz` |
-| `/mcp/amazon-ads`、`/mcp/amazon-ads/healthz` | `127.0.0.1:8790/mcp`、`/healthz` |
-| `/.well-known/connected-account` | `127.0.0.1:8789` |
-| `/connected-account/v1/*` | `127.0.0.1:8789` |
-| `/amazon-ads/.well-known/connected-account`、`/amazon-ads/connected-account/v1/*` | `127.0.0.1:8790`，Ads Provider Base URL 为 `/amazon-ads` |
-
-切换前执行 `nginx -t`，切换后执行：
-
-```bash
-curl --fail https://api.example.com/healthz | jq .
-curl --fail https://api.example.com/mcp/amazon-ads/healthz | jq .
-curl --fail https://api.example.com/amazon/api/status | jq .
-curl --fail https://api.example.com/ | grep -F '/admin-config.js'
-test "$(curl -sSI https://api.example.com/admin-config.js | awk 'BEGIN{IGNORECASE=1}/^cache-control:/{print $2}' | tr -d '\r')" = no-store
-test "$(curl -sS -o /dev/null -w '%{http_code}' https://api.example.com/company)" = 200
-test "$(curl -sSI https://api.example.com/company | awk 'BEGIN{IGNORECASE=1}/^cache-control:/{print $2}' | tr -d '\r')" = no-store
-test "$(curl -sS -o /dev/null -w '%{http_code}' https://api.example.com/privacy)" = 200
-test "$(curl -sSI https://api.example.com/privacy | awk 'BEGIN{IGNORECASE=1}/^cache-control:/{print $2}' | tr -d '\r')" = no-store
-test "$(curl -sS -o /dev/null -w '%{http_code}' https://api.example.com/api/v1/admin/session)" = 200
-# 启用 OA 时应为 302，Location 指向配置 Issuer 的 authorization endpoint。
-test "$(curl -sS -o /dev/null -w '%{http_code}' https://api.example.com/api/v1/admin/oa/login)" = 302
-test "$(curl -sS -o /dev/null -w '%{http_code}' https://api.example.com/readyz)" = 404
-curl -i https://api.example.com/internal/amazon/connections
-```
-
-集成状态接口只返回脱敏的 `ready` / `not_ready`；公网 `/readyz` 和旧内部路径必须为 404。详细 readiness 只在回环地址检查。随后完成一次真实 Amazon 授权和一次只读 MCP 调用。
-
-## 7. systemd 部署
-
-将构建产物放在 `/opt/amazon-sp-api`，配置放在 `/etc/amazon-sp-api/config.yaml`，数据放在 `/var/lib/amazon-sp-api`。安装 `deploy/amazon-sp-api.service`：
+构建产物放 `/opt/amazon-sp-api`，配置放 `/etc/amazon-sp-api/config.yaml`，数据放
+`/var/lib/amazon-sp-api`：
 
 ```bash
 sudo install -m 0644 deploy/amazon-sp-api.service /etc/systemd/system/amazon-sp-api.service
@@ -179,54 +97,42 @@ sudo systemctl enable --now amazon-sp-api.service
 sudo systemctl status amazon-sp-api.service
 ```
 
-systemd 只传入 `NODE_ENV=production` 和 `AMAZON_CONFIG_FILE`；敏感配置不再拆到多个 EnvironmentFile。
+unit 只传入 `NODE_ENV=production` 与 `AMAZON_CONFIG_FILE`，并限制可写路径为数据目录。
 
-## 8. 文件与 PostgreSQL 兼容
+## 7. Nginx 反向代理
 
-- `tokens.json`、`states.json`、`intents.json` 的路径和 JSON 结构保持兼容。
-- Refresh Token 同时支持 legacy 未版本化 envelope 和 v2 envelope，AAD、keyring、revision 语义不变。
-- PostgreSQL Schema 通过版本表按 `expand → backfill → switch → contract` 演进；禁止手工 DDL 或跳过版本。
-- 文件模式升级时必须先停止旧版本，禁止新旧进程同时写同一目录。
+参考 `deploy/api.example.com.nginx`。要点：
 
-上线前在与应用相同的配置和镜像中显式执行：
+- 上游指向 `127.0.0.1:8789`。
+- 公网暴露 `/mcp`、`/oauth/amazon/*`、`/api/v1/accounts*`。
+- 若对公网开放，必须在 Nginx 层加认证：MCP 与账号接口本身不做认证。
+- 不要暴露 `/readyz` 的详细 `checks`，或将其限制到内网。
 
-```bash
-AMAZON_CONFIG_FILE=/etc/amazon-sp-api/config.yaml bun run postgres:migrate
-AMAZON_CONFIG_FILE=/etc/amazon-sp-api/config.yaml bun run postgres:backfill
-```
+## 8. 数据与密钥
 
-确认输出 Schema version `3`，并核对 backfill 的 Account、Credential、active Binding 计数后才切流。应用启动仍会幂等检查 migration，不能替代上述部署步骤。
-
-文件导入 PostgreSQL：
-
-```bash
-AMAZON_CONFIG_FILE=/etc/amazon-sp-api/config.yaml bun run storage:migrate
-```
-
-密钥轮换：
-
-```bash
-AMAZON_CONFIG_FILE=/etc/amazon-sp-api/config.yaml bun run storage:rotate-key
-AMAZON_CONFIG_FILE=/etc/amazon-sp-api/config.yaml bun run storage:rotate-key -- --apply
-```
+- `tokens.json`、`states.json`、`intents.json` 位于 `storage.dataDirectory`。
+- Refresh Token 同时支持 legacy 未版本化 envelope 与 v2 envelope，AAD、keyring、revision 语义不变。
+- 加密密钥轮换：在 `amazon.credentialKeys.keys` 下新增一个 `keyId`，把 `currentKeyId` 指向它并重启。
+  旧 key 必须保留，否则既有 Token 无法解密。两个 key 并存期间新旧数据都能读取。
+- 升级前先停止旧进程，禁止新旧进程同时写同一数据目录。
 
 ## 9. 停止与回滚
 
-应用收到 SIGTERM/SIGINT 后先停止接收请求，再关闭 SQLite、Redis 和 PostgreSQL 资源。Compose 的宽限期为 15 秒。
+应用收到 SIGTERM/SIGINT 后停止接收请求并关闭文件资源，Compose 宽限期 15 秒。
 
-回滚步骤：
+回滚：
 
-1. 停止两个新进程，避免新旧版本同时写 PostgreSQL、Redis 或任一文件目录。
-2. 若仅应用回滚，同时恢复两个上一镜像和与其匹配的 Compose/配置；expand/backfill Schema 保留，不执行向下 DDL。
-3. 若确认新版本产生异常数据写入，恢复切流前 `pg_dump --format=custom` 备份到隔离库，先用相同 keyring 验证 Refresh Token 可解密，再经变更审批替换业务库。
-4. 恢复反向代理上游，启动上一版本，验证健康、管理员 Session、真实授权和只读 MCP 调用。
-
-禁止直接删除 migration v2/v3 表或恢复旧排他约束；这会破坏多 Owner Credential 和 active Binding。仓库的 `npm run test:real-staging` 已覆盖显式 v3 migration、`pg_dump → restore` 以及相同 keyring 的 Repository Refresh Token 解密。
+1. 停止当前进程，避免新旧版本同时写数据目录。
+2. 恢复上一版本代码与 `config.yaml`。
+3. 数据目录结构未变，无需转换；若确认异常写入，从第 2 节备份恢复。
+4. 恢复反向代理上游，验证 `/healthz`、管理员登录与一次只读 MCP 调用。
 
 ## 10. 故障定位
 
-- `/healthz` 200、`/readyz` 503：读取 `checks`，分别检查 LWA、Token Store、密钥、PostgreSQL 和 Redis；当前 readiness 不含 identity。
-- 旧 YAML 启动失败：按字段级错误提示迁移到 v2，不要重新加入兼容字段。
-- OAuth 回调失败：核对 Portal 登记值与 `amazon.publicOrigin` 推导出的 `/oauth/amazon/callback`，包括协议、域名、路径和大小写。
-- Host 被拒绝：把实际公网主机名加入 `server.allowedHosts`，不要加入协议或路径。
-- 文件权限失败：`chmod 600 config.yaml`、`chmod 700 data`，并检查 Secret File 为绝对路径且不允许组/其他用户读取。
+- `/healthz` 200 但 `/readyz` 503：读取 `checks`，分别检查 `lwa`、`tokenStore`、`encryptionKey`。
+- OAuth 回调失败：核对 Portal 登记值与 `amazon.publicOrigin` 推导出的 `/oauth/amazon/callback`，
+  包括协议、域名、路径与大小写。
+- Host 被拒绝：把实际主机名加入 `server.allowedHosts`，不要带协议或路径。
+- 文件权限失败：`chmod 600 config.yaml`、`chmod 700 data`，并确认 Secret File 为绝对路径且
+  不允许组/其他用户读取。
+- 端口占用：内部端口固定 8789，用 `AMAZON_PORT` 改宿主机映射，不要改 YAML。

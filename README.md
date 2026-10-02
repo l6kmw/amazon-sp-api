@@ -3,31 +3,39 @@
 这是一个单用户本地 Amazon SP-API MCP 服务：单进程、单端口，所有状态存于一个本地目录。
 不需要 PostgreSQL、Redis 或任何外部身份系统，MCP 不做认证（服务只应监听回环地址）。
 
-管理控制台的“Amazon 连接”页面统一展示 SP-API 与独立 `amazon-ads-mcp` Provider。Ads 数据由 SP 后端在管理员 Session、CSRF 和审计之后，通过固定回环地址代理；浏览器不会读取 Ads Store、Refresh Token 或 OAuth state。两类 Provider 的 OAuth、Credential、Grant/Binding、JWT audience 和 MCP 进程保持独立。
+## 使用前提
 
-管理入口支持统一 OA 的标准 OIDC Authorization Code + PKCE 登录。`admin.oa` 启用后，本地管理员密码入口关闭；只有配置中精确匹配的 OA `issuer + sub` 会映射为固定 `tenant-1` 管理员。OIDC state、nonce 和 code verifier 仅存在于 10 分钟有效的加密 HttpOnly 流程 Cookie，成功回调后继续使用原有 HttpOnly/Strict 管理 Session、CSRF 与审计。未配置 `admin.oa` 时保留原密码登录，作为显式配置级兼容和回滚模式。
+开始之前需要准备好：
+
+1. **Amazon Seller Central 账号**，且已注册 SP-API 应用，拿到 LWA Client ID 与 Client Secret。
+2. **一个公网 HTTPS 域名**，其回调地址 `<amazon.publicOrigin>/oauth/amazon/callback` 必须在
+   Seller Central 中登记一致。Amazon 不接受回环或纯内网回调，所以本地自用也需要一个指向本机的域名
+   （反向代理或隧道）。
+3. **申请到需要的 Seller 角色**。本服务只做只读操作，但工具能否返回数据取决于你的应用被授予了哪些
+   角色；缺角色时 `amazon_get_read_capabilities` 会返回 `permission_required`，而不是报错。
+
+**这个项目不适合谁**：想一句话接入现成 SaaS 的人。它需要你自己注册 Amazon 应用、自己维护域名和凭证；
+服务本身只负责把授权后的只读能力以 MCP 暴露出来。
 
 ## 架构
 
 ```text
-浏览器 / MCP
-          │ HTTPS
-        Nginx
-          │ 127.0.0.1:8789
+浏览器 / MCP 客户端
+          │ HTTP（仅回环）
           ▼
-  dist/server.js（单一 Node 进程）
+  127.0.0.1:8789  dist/server.js（单一 Node 进程）
     ├─ /oauth/amazon/*
-    ├─ /api/v1/admin/oa/*
-    ├─ /mcp
-    ├─ /.well-known/connected-account
     ├─ /api/v1/accounts/*
+    ├─ /mcp
     ├─ /healthz、/readyz
-    └─ /internal/metrics
+    ├─ /company、/privacy
+    └─ /internal/metrics（仅回环）
           │
-          ├─ 文件模式：tokens.json / states.json / intents.json / connected-account.sqlite
+          └─ storage.dataDirectory：tokens.json / states.json / intents.json
 ```
 
-旧 `8788` 监听、`/internal/amazon/*`、`AMAZON_OAUTH_INTERNAL_URL`、`AMAZON_INTERNAL_SECRET` 和双服务配置均已删除。旧内部路径始终返回 404；Amazon Portal 的公网回调仍是 `/oauth/amazon/callback`。
+**协议面已移除**：`/.well-known/connected-account` 与 `/connected-account/v1/*` 在单用户版中不存在，
+请求返回 404。MCP 不做认证，服务只应监听回环地址。
 
 ## 环境要求
 
@@ -112,7 +120,15 @@ npm run build
 AMAZON_CONFIG_FILE=$PWD/config.yaml npm start
 ```
 
-服务监听 `server.host:server.port`（默认 `127.0.0.1:8789`），数据写入 `storage.dataDirectory`。
+服务监听 `server.host`（默认 `127.0.0.1`），内部端口固定 `8789`，不接受 YAML 覆盖。
+数据写入 `storage.dataDirectory`。
+
+验证：
+
+```bash
+curl -s http://127.0.0.1:8789/healthz | jq .
+curl -s http://127.0.0.1:8789/readyz  | jq .
+```
 
 ### 4. 连接 Amazon 账号
 
@@ -127,7 +143,31 @@ curl -s http://127.0.0.1:8789/api/v1/accounts/authorization-attempts/<attemptId>
 curl -s http://127.0.0.1:8789/api/v1/accounts | jq .
 ```
 
-MCP 端点：`POST http://127.0.0.1:8789/mcp`，**无需 Authorization 头**。
+### 5. 接入 MCP 客户端
+
+MCP 端点为 `http://127.0.0.1:8789/mcp`（Streamable HTTP），**无需 Authorization 头**。
+以 Claude Code / 支持 MCP 的客户端为例：
+
+```json
+{
+  "mcpServers": {
+    "amazon-sp-api": {
+      "type": "http",
+      "url": "http://127.0.0.1:8789/mcp"
+    }
+  }
+}
+```
+
+接上之后建议按这个顺序调用：
+
+1. `amazon_get_identity` —— 确认服务识别到的是本地 owner。
+2. `amazon_list_accounts` —— 拿到 `account_id`（后续所有业务工具都要它）。
+3. `amazon_get_read_capabilities` —— 查看哪些 action 在当前账号下是 `available`，
+   哪些是 `permission_required`。
+4. 再调用具体领域工具，例如 `amazon_orders_read`、`amazon_inventory_read`。
+
+所有业务工具都必须传 `account_id`，不接受直接传 Selling Partner ID。
 
 ### 安全边界
 
@@ -142,8 +182,6 @@ MCP 与账号管理接口都不做认证，因此服务只应绑定回环地址�
 | `/oauth/amazon/start` | 打开授权同意页 |
 | `/oauth/amazon/renew` | 打开 Manage Your Apps 续期入口 |
 | `/oauth/amazon/callback` | Amazon Portal 固定回调 |
-| `/api/v1/admin/oa/login` | 创建 OA OIDC PKCE 登录并跳转到 OA |
-| `/api/v1/admin/oa/callback` | 校验 OA 回调并签发本地管理 Session |
 | `/amazon/api/config` | 对接方使用的脱敏 MCP 与 Provider 元数据 |
 | `/amazon/api/status` | 对接方使用的脱敏总体 readiness |
 | `/mcp` | Streamable HTTP MCP |
@@ -151,8 +189,10 @@ MCP 与账号管理接口都不做认证，因此服务只应绑定回环地址�
 | `/healthz` | 进程 liveness，始终反映进程是否可服务 HTTP |
 | `/readyz` | LWA、Token Store 与加密密钥 readiness |
 | `/internal/metrics` | 回环 Prometheus 指标 |
+| `/company`、`/privacy` | 公开法务页面（由 `operator` 配置渲染） |
+| `/mcp/healthz` | MCP 传输层存活检查 |
 
-`/healthz` 返回 `status`、`version`、`tools`、`lwaConfigured`。依赖异常不改变 liveness；回环 `/readyz` 在任一必需依赖失败时返回 503 并包含逐项检查。公网只暴露 `/amazon/api/config` 和 `/amazon/api/status`，`/amazon/` 不提供前端页面，`/readyz` 继续返回 404。
+`/healthz` 返回 `status`、`version`、`tools`、`lwaConfigured`。依赖异常不改变 liveness；`/readyz` 在任一必需依赖失败时返回 503 并包含逐项检查（`lwa`、`tokenStore`、`encryptionKey`）。`/amazon/api/config` 与 `/amazon/api/status` 返回脱敏的对接元数据，不提供前端页面。
 
 ## Seller 全量只读 MCP
 
